@@ -1,0 +1,14 @@
+name: Local
+variables:
+  - name: BMKG_PORT
+    value: "8081"
+    description: ""
+  - name: BMKG_API_KEY
+    value: secret-key-bmkg
+    description: ""
+  - name: PVMBG_BEARER_TOKEN
+    value: pvmbg-secret-token-m1
+    description: ""
+  - name: PVMBG_PORT
+    value: "8082"
+    description: ""

@@ -1,0 +1,16 @@
+info:
+  name: Outage
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: http://localhost:{{PVMBG_PORT}}/admin/outage
+  auth: inherit
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
