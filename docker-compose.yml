@@ -1,0 +1,20 @@
+services:
+  bmkg-mock:
+    build:
+      context: .
+      dockerfile: services/bmkg-mock/Dockerfile
+    ports:
+      - "8081:8081"
+    env_file:
+      - services/bmkg-mock/.env
+    restart: unless-stopped
+
+  pvmbg-mock:
+    build:
+      context: .
+      dockerfile: services/pvmbg-mock/Dockerfile
+    ports:
+      - "8082:8082"
+    env_file:
+      - services/pvmbg-mock/.env
+    restart: unless-stopped
