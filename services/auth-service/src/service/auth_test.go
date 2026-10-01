@@ -195,22 +195,22 @@ func TestRefresh_ConcurrentOnlyOneWins(t *testing.T) {
 	}
 }
 
-func TestRefresh_StoreErrorIsNotInvalidGrant(t *testing.T) {
+func TestRefresh_StoreDownIsUnavailable(t *testing.T) {
 	f := newFixture(t)
 	f.mr.Close()
 
 	_, err := f.svc.Refresh(context.Background(), "anything")
-	if err == nil || errors.Is(err, service.ErrInvalidGrant) {
-		t.Fatalf("store failure should surface as internal error, got %v", err)
+	if !errors.Is(err, service.ErrUnavailable) || errors.Is(err, service.ErrInvalidGrant) {
+		t.Fatalf("expected ErrUnavailable only, got %v", err)
 	}
 }
 
-func TestIssueToken_StoreErrorIsNotInvalidClient(t *testing.T) {
+func TestIssueToken_StoreDownIsUnavailable(t *testing.T) {
 	f := newFixture(t)
 	f.mr.Close()
 
 	_, err := f.svc.IssueToken(context.Background(), "field-team", "field-secret")
-	if err == nil || errors.Is(err, service.ErrInvalidClient) {
-		t.Fatalf("store failure should surface as internal error, got %v", err)
+	if !errors.Is(err, service.ErrUnavailable) || errors.Is(err, service.ErrInvalidClient) {
+		t.Fatalf("expected ErrUnavailable only, got %v", err)
 	}
 }
