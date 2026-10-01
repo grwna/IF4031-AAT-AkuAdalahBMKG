@@ -18,3 +18,45 @@ services:
     env_file:
       - services/pvmbg-mock/.env
     restart: unless-stopped
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    ports:
+      - "8084:8084"
+    env_file:
+      - services/auth-service/.env
+    networks:
+      - default
+      - auth-net
+    depends_on:
+      auth-store:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8084/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  auth-store:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - auth-store-data:/data
+    networks:
+      - auth-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+networks:
+  auth-net:
+    internal: true
+
+volumes:
+  auth-store-data:
