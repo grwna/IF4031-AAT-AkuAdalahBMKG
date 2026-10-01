@@ -32,7 +32,7 @@ func (h *BMKGHandler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		key := r.Header.Get("X-BMKG-Key")
 		if key == "" || key != h.apiKey {
-			h.logger.WarnContext(r.Context(), "unauthorized access attempt", "provided_key", key)
+			h.logger.WarnContext(r.Context(), "unauthorized access attempt", "reason", "invalid key")
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}

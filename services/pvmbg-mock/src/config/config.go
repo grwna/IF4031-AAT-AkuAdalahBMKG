@@ -10,12 +10,17 @@ type Config struct {
 	EventIntervalSec int
 }
 
-func LoadConfig() Config {
+func LoadConfig() (Config, error) {
+	token, err := envutil.RequiredStr("PVMBG_BEARER_TOKEN")
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Port:             envutil.Str("PORT", "8082"),
-		BearerToken:      envutil.Str("PVMBG_BEARER_TOKEN", "pvmbg-secret-token"),
+		BearerToken:      token,
 		MinDelayMS:       envutil.Int("PVMBG_MIN_DELAY_MS", 500),
 		MaxDelayMS:       envutil.Int("PVMBG_MAX_DELAY_MS", 3000),
 		EventIntervalSec: envutil.Int("PVMBG_EVENT_INTERVAL_SEC", 10),
-	}
+	}, nil
 }
