@@ -16,8 +16,13 @@ import (
 )
 
 func main() {
-	cfg := config.LoadConfig()
 	log := logger.NewJSONLogger()
+
+	cfg, err := config.LoadConfig()
+	if err != nil {
+		log.Error("failed to load configuration, rejecting launch", "error", err)
+		os.Exit(1)
+	}
 
 	st := store.NewMemoryStore()
 	generator.Seed(st, 20)

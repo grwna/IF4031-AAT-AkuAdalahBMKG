@@ -10,12 +10,17 @@ type Config struct {
 	EventIntervalSec int
 }
 
-func LoadConfig() Config {
+func LoadConfig() (Config, error) {
+	apiKey, err := envutil.RequiredStr("BMKG_API_KEY")
+	if err != nil {
+		return Config{}, err
+	}
+
 	return Config{
 		Port:             envutil.Str("PORT", "8081"),
-		APIKey:           envutil.Str("BMKG_API_KEY", "bmkg-secret-key"),
+		APIKey:           apiKey,
 		MinDelayMS:       envutil.Int("BMKG_MIN_DELAY_MS", 50),
 		MaxDelayMS:       envutil.Int("BMKG_MAX_DELAY_MS", 150),
 		EventIntervalSec: envutil.Int("BMKG_EVENT_INTERVAL_SEC", 10),
-	}
+	}, nil
 }

@@ -3,6 +3,7 @@ package envutil
 import (
 	"os"
 	"strconv"
+	"fmt"
 )
 
 // Str returns the value of the environment variable key,
@@ -12,6 +13,14 @@ func Str(key, fallback string) string {
 		return v
 	}
 	return fallback
+}
+
+func RequiredStr(key string) (string, error) {
+	v := os.Getenv(key)
+	if v == "" {
+		return "", fmt.Errorf("missing required environment variable: %s", key)
+	}
+	return v, nil
 }
 
 // Int returns the integer value of the environment variable key,

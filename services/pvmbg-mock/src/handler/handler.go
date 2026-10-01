@@ -37,7 +37,7 @@ func (h *PVMBGHandler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
 		authHeader := r.Header.Get("Authorization")
 		parts := strings.SplitN(authHeader, " ", 2)
 		if len(parts) != 2 || parts[0] != "Bearer" || parts[1] != h.bearerToken {
-			h.logger.WarnContext(r.Context(), "unauthorized PVMBG access attempt", "auth_header", authHeader)
+			h.logger.WarnContext(r.Context(), "unauthorized PVMBG access attempt", "reason", "invalid token")
 			http.Error(w, `{"error":"unauthorized"}`, http.StatusUnauthorized)
 			return
 		}
