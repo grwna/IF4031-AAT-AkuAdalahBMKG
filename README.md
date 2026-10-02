@@ -29,7 +29,8 @@ Full architecture diagram: see [`docs/architecture-diagram.*`](docs/architecture
 | Web framework | [ ] |
 | Canonical Store database | [ ] |
 | Message broker | [ ] |
-| Token format/library | [ ] |
+| Token format/library | JWT (Ed25519), golang-jwt/jwt v5 |
+| Refresh token store | Redis 7 |
 | Structured logging | [ ] |
 | Load testing | [ ] |
 | Orchestration | Docker Compose |
@@ -45,7 +46,10 @@ project-root/
 ├── docker-compose.yml
 ├── .env.example
 ├── docs/
+├── .bruno/
 ├── scripts/
+│   ├── gen-keys.sh
+│   ├── tests/
 │   ├── load-test/
 │   └── demo/
 └── services/
@@ -79,7 +83,6 @@ project-root/
 | `BNPB_CLIENT_API_PORT` | Client-Facing API port | `8080` |
 | `POLLING_INTERVAL_SECONDS` | Aggregator polling interval to the mocks | `[2-5]` |
 | `PVMBG_DELAY_MIN_MS` / `PVMBG_DELAY_MAX_MS` | PVMBG random delay range | `500` / `3000` |
-| `ACCESS_TOKEN_TTL_SECONDS` | Field Team access token TTL | `60` |
 
 ### BMKG Mock (`services/bmkg-mock/.env.example`)
 | Variable | Description |
@@ -93,10 +96,25 @@ project-root/
 | `PVMBG_TOKEN_SECRET` | PVMBG token signing key/format |
 
 ### Auth Service (`services/auth-service/.env.example`)
+| Variable | Description | Default |
+|---|---|---|
+| `PORT` | Auth service port | `8084` |
+| `JWT_PRIVATE_KEY` | Token signing key, from `scripts/gen-keys.sh` | - |
+| `JWT_ISSUER` | Token issuer | `bnpb-auth-service` |
+| `JWT_AUDIENCE` | Token audience | `bnpb-client-api` |
+| `ACCESS_TOKEN_TTL_SECONDS` | Access token TTL | `60` |
+| `REFRESH_TOKEN_TTL_SECONDS` | Refresh token TTL | `3600` |
+| `REDIS_ADDR` | Redis address | - |
+| `CLIENT_MEDIA_ID` / `_SECRET` / `_SCOPE` | Media client | - |
+| `CLIENT_FIELD_ID` / `_SECRET` / `_SCOPE` | Field Team client | - |
+| `CLIENT_OPS_ID` / `_SECRET` / `_SCOPE` | BNPB Ops client | - |
+
+### Bruno (`.bruno/.env`)
 | Variable | Description |
 |---|---|
-| `JWT_SIGNING_KEY` | Downstream client token signing key |
-| `REFRESH_TOKEN_TTL_SECONDS` | Refresh token TTL |
+| `BMKG_API_KEY` | Same as BMKG mock |
+| `PVMBG_BEARER_TOKEN` | Same as PVMBG mock |
+| `CLIENT_MEDIA_SECRET` / `CLIENT_FIELD_SECRET` / `CLIENT_OPS_SECRET` | Same as auth service |
 
 *(Fill in as needed for each service — no real credentials should ever be committed, only example values.)*
 
@@ -106,20 +124,24 @@ project-root/
 
 ```bash
 # 1. Clone the repo and enter the folder
-git clone [repo-url]
-cd project-root
+git clone https://github.com/grwna/IF4031-AAT-AkuAdalahBMKG.git
+cd IF4031-AAT-AkuAdalahBMKG
 
 # 2. Copy the configuration files
 cp .env.example .env
 # also copy each services/<name>/.env.example to .env
 
-# 3. Start the whole system
+# 3. Generate JWT keys, put JWT_PRIVATE_KEY in services/auth-service/.env and JWT_PUBLIC_KEY in services/client-api/.env
+./scripts/gen-keys.sh
+
+# 4. Start the whole system
 docker compose up --build
 
 # Verify every service is healthy
 curl http://localhost:8081/health   # BMKG
 curl http://localhost:8082/health   # PVMBG
 curl http://localhost:8080/health   # Client-Facing API
+curl http://localhost:8084/health   # Auth Service
 # [add health checks for other services]
 ```
 
@@ -136,7 +158,8 @@ Seed data (≥20 historical records) is automatically available in BMKG & PVMBG 
 | Aggregator | [ ] | Polling, mapping, publishing to the broker |
 | Canonical Store | [ ] | HazardEvent storage |
 | Client-Facing API | 8080 | Endpoint for downstream clients |
-| Auth/Token Service | [ ] | Token issuance & refresh |
+| Auth/Token Service | 8084 | Token issuance & refresh |
+| Auth Store | - | Redis for refresh tokens (internal) |
 | Message Broker | [ ] | HazardEvent fan-out |
 | Consumer – Dashboard | [ ] | Example subscriber 1 |
 | Consumer – Notifier | [ ] | Example subscriber 2 |
@@ -172,11 +195,18 @@ curl -X POST http://localhost:8082/admin/outage -d '{"enabled": false}'
 # Show that a BMKG credential is rejected by PVMBG and vice versa
 curl -H "X-BMKG-Key: <bmkg-key>" http://localhost:8082/volcanic-reports  # should be 401/403
 
+# Get a token
+curl -X POST http://localhost:8084/token \
+  -d '{"grant_type":"client_credentials","client_id":"field-team","client_secret":"<field-secret>"}'
+
 # Show that a Media-scoped client is rejected when requesting raw fields
 curl -H "Authorization: Bearer <media-token>" http://localhost:8080/[raw-endpoint]  # should be 401/403
 
-# Wait for / speed up the Field Team token TTL (default 60s), then:
-curl -X POST http://localhost:[auth-port]/refresh -d '{"refresh_token": "<token>"}'
+# Wait for the Field Team token TTL (default 60s), then:
+curl -X POST http://localhost:8084/refresh -d '{"refresh_token":"<refresh-token>"}'
+
+# Reusing the old refresh token should be 401
+curl -X POST http://localhost:8084/refresh -d '{"refresh_token":"<old-refresh-token>"}'
 ```
 
 ### P4 — Microservice Architecture & Flexible Storage
