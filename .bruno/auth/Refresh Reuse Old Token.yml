@@ -1,0 +1,31 @@
+info:
+  name: Refresh Reuse Old Token
+  type: http
+  seq: 6
+
+http:
+  method: POST
+  url: http://localhost:{{AUTH_PORT}}/refresh
+  body:
+    type: json
+    data: |-
+      {
+        "refresh_token": "{{oldRefreshToken}}"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("old refresh token is rejected", function () {
+          expect(res.status).to.equal(401);
+          expect(res.body.error).to.equal("invalid_grant");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
