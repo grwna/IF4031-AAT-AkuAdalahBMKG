@@ -6,4 +6,4 @@ info:
 request:
   auth:
     type: bearer
-    token: "{{PVMBG_BEARER_TOKEN}}"
+    token: "{{process.env.PVMBG_BEARER_TOKEN}}"

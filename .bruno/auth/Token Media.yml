@@ -1,0 +1,41 @@
+info:
+  name: Token Media
+  type: http
+  seq: 2
+
+http:
+  method: POST
+  url: http://localhost:{{AUTH_PORT}}/token
+  body:
+    type: json
+    data: |-
+      {
+        "grant_type": "client_credentials",
+        "client_id": "{{CLIENT_MEDIA_ID}}",
+        "client_secret": "{{process.env.CLIENT_MEDIA_SECRET}}"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.status === 200) {
+          bru.setVar("accessToken", res.body.access_token);
+          bru.setVar("refreshToken", res.body.refresh_token);
+        }
+    - type: tests
+      code: |-
+        test("returns 200 with token pair", function () {
+          expect(res.status).to.equal(200);
+          expect(res.body.token_type).to.equal("Bearer");
+          expect(res.body.access_token).to.be.a("string");
+          expect(res.body.refresh_token).to.be.a("string");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
