@@ -61,11 +61,11 @@ func (h *AuthHandler) Token(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.GrantType != "client_credentials" {
-		writeError(w, http.StatusBadRequest, "unsupported_grant_type", "grant_type must be client_credentials")
+		writeError(w, http.StatusBadRequest, "unsupported_grant_type", "unsupported grant type")
 		return
 	}
 	if req.ClientID == "" || req.ClientSecret == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "client_id and client_secret are required")
+		writeError(w, http.StatusBadRequest, "invalid_request", "missing required parameter")
 		return
 	}
 
@@ -79,7 +79,7 @@ func (h *AuthHandler) Refresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if req.RefreshToken == "" {
-		writeError(w, http.StatusBadRequest, "invalid_request", "refresh_token is required")
+		writeError(w, http.StatusBadRequest, "invalid_request", "missing required parameter")
 		return
 	}
 
@@ -120,20 +120,20 @@ func (h *AuthHandler) respond(w http.ResponseWriter, r *http.Request, pair servi
 	case errors.Is(err, service.ErrInvalidClient):
 		writeError(w, http.StatusUnauthorized, "invalid_client", "client authentication failed")
 	case errors.Is(err, service.ErrInvalidGrant):
-		writeError(w, http.StatusUnauthorized, "invalid_grant", "refresh token is invalid, expired, or revoked")
+		writeError(w, http.StatusUnauthorized, "invalid_grant", "invalid refresh token")
 	case errors.Is(err, service.ErrUnavailable):
 		h.log.ErrorContext(r.Context(), "redis_unavailable", "error", err)
-		writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "token store is unavailable, retry later")
+		writeError(w, http.StatusServiceUnavailable, "temporarily_unavailable", "service temporarily unavailable")
 	default:
 		h.log.ErrorContext(r.Context(), "token_error", "error", err)
-		writeError(w, http.StatusInternalServerError, "server_error", "internal error")
+		writeError(w, http.StatusInternalServerError, "server_error", "internal server error")
 	}
 }
 
 func decode(w http.ResponseWriter, r *http.Request, dst any) bool {
 	r.Body = http.MaxBytesReader(w, r.Body, maxBodyBytes)
 	if err := json.NewDecoder(r.Body).Decode(dst); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid_request", "request body must be valid JSON")
+		writeError(w, http.StatusBadRequest, "invalid_request", "invalid request body")
 		return false
 	}
 	return true
