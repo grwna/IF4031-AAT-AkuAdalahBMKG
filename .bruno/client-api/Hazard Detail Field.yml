@@ -1,0 +1,28 @@
+info:
+  name: Hazard Detail Field
+  type: http
+  seq: 4
+
+http:
+  method: GET
+  url: http://localhost:{{CLIENT_API_PORT}}/hazards/{{hazardId}}
+  auth:
+    type: bearer
+    token: "{{fieldAccessToken}}"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("field team receives full hazard detail", function () {
+          expect(res.status).to.equal(200);
+          expect(res.body.data.hazard_id).to.equal(bru.getVar("hazardId"));
+          expect(res.body.data).to.include.keys("source_ref_id", "attributes");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

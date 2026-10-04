@@ -19,6 +19,23 @@ services:
       - services/pvmbg-mock/.env
     restart: unless-stopped
 
+  # TODO: aggregator + canonical-store (no host ports)
+
+  client-api:
+    build:
+      context: .
+      dockerfile: services/client-api/Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - services/client-api/.env
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
   auth-service:
     build:
       context: .
@@ -53,6 +70,8 @@ services:
       timeout: 3s
       retries: 5
     restart: unless-stopped
+
+  # TODO: message-broker, consumer-dashboard, consumer-notifier
 
 networks:
   auth-net:

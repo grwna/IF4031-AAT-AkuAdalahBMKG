@@ -1,7 +1,7 @@
 info:
   name: Token Ops
   type: http
-  seq: 4
+  seq: 3
 
 http:
   method: POST
@@ -23,6 +23,7 @@ runtime:
         if (res.status === 200) {
           bru.setVar("accessToken", res.body.access_token);
           bru.setVar("refreshToken", res.body.refresh_token);
+          bru.setVar("opsAccessToken", res.body.access_token);
         }
     - type: tests
       code: |-

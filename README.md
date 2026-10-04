@@ -109,6 +109,18 @@ project-root/
 | `CLIENT_FIELD_ID` / `_SECRET` / `_SCOPE` | Field Team client | - |
 | `CLIENT_OPS_ID` / `_SECRET` / `_SCOPE` | BNPB Ops client | - |
 
+### Client-Facing API (`services/client-api/.env.example`)
+| Variable | Description | Default |
+|---|---|---|
+| `PORT` | Client-Facing API port | `8080` |
+| `JWT_PUBLIC_KEY` | Token verification key, from `scripts/gen-keys.sh` (must be the pair of the auth service's `JWT_PRIVATE_KEY`) | - |
+| `JWT_ISSUER` | Expected token issuer, must match the auth service | `bnpb-auth-service` |
+| `JWT_AUDIENCE` | Expected token audience, must match the auth service | `bnpb-client-api` |
+| `JWT_LEEWAY_SECONDS` | Clock skew tolerance for `exp` | `0` |
+| `AGGREGATOR_URL` | Aggregator internal API base URL | - |
+| `AGGREGATOR_TIMEOUT_MS` | Timeout for each call to the aggregator | `2000` |
+| `MAX_CONCURRENT_REQUESTS` | Data requests processed at once; extra requests get `429` | `100` |
+
 ### Bruno (`.bruno/.env`)
 | Variable | Description |
 |---|---|
@@ -164,6 +176,22 @@ Seed data (≥20 historical records) is automatically available in BMKG & PVMBG 
 | Consumer – Dashboard | [ ] | Example subscriber 1 |
 | Consumer – Notifier | [ ] | Example subscriber 2 |
 
+### Client-Facing API Endpoints
+
+All endpoints except `/health` require `Authorization: Bearer <access_token>` from the auth service.
+
+| Endpoint | Media (`hazards:read:summary`) | Field Team / Ops (`hazards:read:raw`) |
+|---|---|---|
+| `GET /hazards` | `200`, summary fields only | `200`, all fields |
+| `GET /hazards?fields=a,b` | `200` if all summary fields, `403` if any raw field | `200` |
+| `GET /hazards/{hazard_id}` | `200`, summary fields only | `200`, all fields |
+| `GET /hazards/{hazard_id}/raw` | `403` | `200` (`source_ref_id`, `latitude`, `longitude`, `attributes`) |
+| `GET /health` | no token needed | no token needed |
+
+Summary fields: `hazard_id`, `source`, `hazard_type`, `severity`, `area_name`, `occurred_at`, `ingested_at`. Raw fields: `source_ref_id`, `latitude`, `longitude`, `attributes`.
+
+`GET /hazards` forwards the filters `type`, `source`, `severity`, `since`, `until`, `limit`, `cursor` to the aggregator. Every data response carries `source_status` from the aggregator. Errors use `{"error":{"code":"...","message":"..."}}`: `401` (`MISSING_TOKEN`, `INVALID_TOKEN`, `TOKEN_EXPIRED`), `403` (`INSUFFICIENT_SCOPE`), `429` (`TOO_MANY_REQUESTS`), `503` (`UPSTREAM_UNAVAILABLE`, aggregator unreachable).
+
 ---
 
 ## 8. Triggering Test Scenarios per Problem
@@ -195,19 +223,32 @@ curl -X POST http://localhost:8082/admin/outage -d '{"enabled": false}'
 # Show that a BMKG credential is rejected by PVMBG and vice versa
 curl -H "X-BMKG-Key: <bmkg-key>" http://localhost:8082/volcanic-reports  # should be 401/403
 
-# Get a token
+# Get a token (Media: media-client, Field Team: field-team, Ops: bnpb-ops)
 curl -X POST http://localhost:8084/token \
   -d '{"grant_type":"client_credentials","client_id":"field-team","client_secret":"<field-secret>"}'
 
-# Show that a Media-scoped client is rejected when requesting raw fields
-curl -H "Authorization: Bearer <media-token>" http://localhost:8080/[raw-endpoint]  # should be 401/403
+# Media only receives summary fields (no source_ref_id, latitude, longitude, attributes)
+curl -H "Authorization: Bearer <media-token>" http://localhost:8080/hazards
 
-# Wait for the Field Team token TTL (default 60s), then:
+# Media explicitly requesting raw fields is rejected by the server
+curl -H "Authorization: Bearer <media-token>" "http://localhost:8080/hazards?fields=severity,latitude"  # 403 INSUFFICIENT_SCOPE
+curl -H "Authorization: Bearer <media-token>" http://localhost:8080/hazards/<hazard-id>/raw            # 403 INSUFFICIENT_SCOPE
+
+# Field Team receives raw fields
+curl -H "Authorization: Bearer <field-token>" http://localhost:8080/hazards/<hazard-id>/raw            # 200
+
+# Wait for the Field Team access token TTL (default 60s): the old access token is rejected
+curl -H "Authorization: Bearer <field-token>" http://localhost:8080/hazards                            # 401 TOKEN_EXPIRED
+
+# Refresh without logging in again, then use the new access token
 curl -X POST http://localhost:8084/refresh -d '{"refresh_token":"<refresh-token>"}'
+curl -H "Authorization: Bearer <new-field-token>" http://localhost:8080/hazards                        # 200
 
 # Reusing the old refresh token should be 401
 curl -X POST http://localhost:8084/refresh -d '{"refresh_token":"<old-refresh-token>"}'
 ```
+
+With Bruno: run the `auth` folder, then the `client-api` folder (CLI: `npx @usebruno/cli run auth client-api --env Local` from `.bruno/`). To show the expired token, use the Bruno app (tokens are kept between requests in the same session): run `auth`, wait more than 60 seconds, then run `client-api/Hazards Old Access Token` (expects `401 TOKEN_EXPIRED`).
 
 ### P4 — Microservice Architecture & Flexible Storage
 ```bash
