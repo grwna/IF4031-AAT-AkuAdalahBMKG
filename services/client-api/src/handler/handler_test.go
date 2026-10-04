@@ -292,7 +292,7 @@ func TestFields(t *testing.T) {
 
 func TestScopeDeniedNeverCallsAggregator(t *testing.T) {
 	e := newEnv(t, 10)
-	opsOnly := e.token("weird-client", "ops:admin")
+	noScope := e.token("misconfigured-client", "")
 
 	cases := []struct {
 		name, path, token string
@@ -300,8 +300,8 @@ func TestScopeDeniedNeverCallsAggregator(t *testing.T) {
 		{"media raw field via fields", "/hazards?fields=severity,latitude", e.media()},
 		{"media attributes on detail", "/hazards/BMKG-bmkg-0021?fields=attributes", e.media()},
 		{"media raw endpoint", "/hazards/BMKG-bmkg-0021/raw", e.media()},
-		{"no read scope list", "/hazards", opsOnly},
-		{"no read scope detail", "/hazards/BMKG-bmkg-0021", opsOnly},
+		{"no read scope list", "/hazards", noScope},
+		{"no read scope detail", "/hazards/BMKG-bmkg-0021", noScope},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

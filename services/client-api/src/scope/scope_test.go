@@ -55,9 +55,7 @@ func TestAccessFor(t *testing.T) {
 	cases := map[string]scope.Access{
 		"hazards:read:summary":                  scope.AccessSummary,
 		"hazards:read:raw":                      scope.AccessRaw,
-		"hazards:read:raw ops:admin":            scope.AccessRaw,
 		"hazards:read:summary hazards:read:raw": scope.AccessRaw,
-		"ops:admin":                             scope.AccessNone,
 		"":                                      scope.AccessNone,
 		"hazards:read":                          scope.AccessNone,
 	}

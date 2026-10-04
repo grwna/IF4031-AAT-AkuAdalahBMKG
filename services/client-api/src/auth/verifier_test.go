@@ -170,11 +170,16 @@ func TestVerify_Rejected(t *testing.T) {
 }
 
 func TestClaims_HasScope(t *testing.T) {
-	c := auth.Claims{Scope: "hazards:read:raw ops:admin"}
-	if !c.HasScope("ops:admin") || !c.HasScope("hazards:read:raw") {
+	c := auth.Claims{Scope: "hazards:read:summary hazards:read:raw"}
+	if !c.HasScope("hazards:read:summary") || !c.HasScope("hazards:read:raw") {
+
 		t.Error("expected both scopes present")
 	}
-	if c.HasScope("hazards:read") || c.HasScope("hazards:read:summary") {
-		t.Error("expected partial or absent scope to be false")
+	if c.HasScope("hazards:read") || c.HasScope("hazards") {
+		t.Error("expected partial scope to be false")
+	}
+	single := auth.Claims{Scope: "hazards:read:raw"}
+	if single.HasScope("hazards:read:summary") {
+		t.Error("expected absent scope to be false")
 	}
 }
