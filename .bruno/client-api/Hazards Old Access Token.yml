@@ -1,0 +1,27 @@
+info:
+  name: Hazards Old Access Token
+  type: http
+  seq: 9
+
+http:
+  method: GET
+  url: http://localhost:{{CLIENT_API_PORT}}/hazards
+  auth:
+    type: bearer
+    token: "{{oldAccessToken}}"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("access token from before refresh is rejected after TTL", function () {
+          expect(res.status).to.equal(401);
+          expect(res.body.error.code).to.equal("TOKEN_EXPIRED");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

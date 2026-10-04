@@ -9,6 +9,9 @@ variables:
   - name: AUTH_PORT
     value: "8084"
     description: ""
+  - name: CLIENT_API_PORT
+    value: "8080"
+    description: ""
   - name: CLIENT_MEDIA_ID
     value: media-client
     description: ""
