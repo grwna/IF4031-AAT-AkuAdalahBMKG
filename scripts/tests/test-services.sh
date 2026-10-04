@@ -6,7 +6,7 @@ GREEN='\033[0;32m'
 YELLOW='\033[1;33m'
 NC='\033[0m'
 
-SERVICES=("bmkg-mock" "pvmbg-mock" "auth-service")
+SERVICES=("bmkg-mock" "pvmbg-mock" "auth-service" "client-api")
 
 usage() {
     cat <<EOF
