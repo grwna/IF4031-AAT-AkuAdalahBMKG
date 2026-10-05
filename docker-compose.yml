@@ -104,7 +104,21 @@ services:
       retries: 3
     restart: unless-stopped
 
-  # TODO: consumer-notifier
+  consumer-notifier:
+    build:
+      context: .
+      dockerfile: services/consumer-notifier/Dockerfile
+    env_file:
+      - services/consumer-notifier/.env
+    depends_on:
+      message-broker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
 networks:
   auth-net:
