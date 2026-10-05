@@ -25,13 +25,13 @@ func main() {
 	l.Info("Memulai Aggregator Service...")
 
 	// 2. Membaca konfigurasi dari variabel lingkungan (environment variables)
-	port := envutil.Str("PORT", "8083")
-	dbURL := envutil.Str("DATABASE_URL", "postgres://aggregator_user:aggregator_pass@canonical-store:5432/canonical_store?sslmode=disable")
-	bmkgURL := envutil.Str("BMKG_URL", "http://bmkg-mock:8081")
-	bmkgKey := envutil.Str("BMKG_API_KEY", "bmkg-secret-key-123")
-	pvmbgURL := envutil.Str("PVMBG_URL", "http://pvmbg-mock:8082")
-	pvmbgToken := envutil.Str("PVMBG_TOKEN", "pvmbg-secret-token-456")
-	pollIntervalStr := envutil.Str("POLL_INTERVAL", "3s")
+	port := envutil.Str("PORT", "")
+	dbURL := envutil.Str("DATABASE_URL", "")
+	bmkgURL := envutil.Str("BMKG_URL", "")
+	bmkgKey := envutil.Str("BMKG_API_KEY", "")
+	pvmbgURL := envutil.Str("PVMBG_URL", "")
+	pvmbgToken := envutil.Str("PVMBG_TOKEN", "")
+	pollIntervalStr := envutil.Str("POLL_INTERVAL", "")
 
 	pollInterval, err := time.ParseDuration(pollIntervalStr)
 	if err != nil {
