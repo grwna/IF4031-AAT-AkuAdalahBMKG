@@ -19,7 +19,48 @@ services:
       - services/pvmbg-mock/.env
     restart: unless-stopped
 
-  # TODO: aggregator + canonical-store (no host ports)
+  canonical-store:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: aggregator_user
+      POSTGRES_PASSWORD: aggregator_pass
+      POSTGRES_DB: canonical_store
+    volumes:
+      - canonical-store-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U aggregator_user -d canonical_store"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  aggregator:
+    build:
+      context: .
+      dockerfile: services/aggregator/Dockerfile
+    ports:
+      - "8083:8083"
+    environment:
+      PORT: 8083
+      DATABASE_URL: postgres://aggregator_user:aggregator_pass@canonical-store:5432/canonical_store?sslmode=disable
+      BMKG_URL: http://bmkg-mock:8081
+      BMKG_API_KEY: bmkg-secret-key-123
+      PVMBG_URL: http://pvmbg-mock:8082
+      PVMBG_TOKEN: pvmbg-secret-token-456
+      POLL_INTERVAL: 3s
+    depends_on:
+      canonical-store:
+        condition: service_healthy
+      bmkg-mock:
+        condition: service_started
+      pvmbg-mock:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
   client-api:
     build:
@@ -79,3 +120,5 @@ networks:
 
 volumes:
   auth-store-data:
+  canonical-store-data:
+
