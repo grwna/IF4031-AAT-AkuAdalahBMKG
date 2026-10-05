@@ -88,7 +88,23 @@ services:
       start_period: 20s
     restart: unless-stopped
 
-  # TODO: consumer-dashboard, consumer-notifier
+  consumer-dashboard:
+    build:
+      context: .
+      dockerfile: services/consumer-dashboard/Dockerfile
+    env_file:
+      - services/consumer-dashboard/.env
+    depends_on:
+      message-broker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8085/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  # TODO: consumer-notifier
 
 networks:
   auth-net:
