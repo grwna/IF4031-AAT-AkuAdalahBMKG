@@ -71,7 +71,24 @@ services:
       retries: 5
     restart: unless-stopped
 
-  # TODO: message-broker, consumer-dashboard, consumer-notifier
+  message-broker:
+    image: rabbitmq:4-management-alpine
+    hostname: message-broker
+    ports:
+      - "15672:15672"
+    env_file:
+      - services/message-broker/.env
+    volumes:
+      - message-broker-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  # TODO: consumer-dashboard, consumer-notifier
 
 networks:
   auth-net:
@@ -79,3 +96,4 @@ networks:
 
 volumes:
   auth-store-data:
+  message-broker-data:
