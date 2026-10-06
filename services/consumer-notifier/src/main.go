@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"errors"
-	"log/slog"
 	"net/http"
 	"os"
 	"os/signal"
@@ -13,6 +12,8 @@ import (
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/consumer-notifier/src/broker"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/consumer-notifier/src/config"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/consumer-notifier/src/handler"
+	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/consumer-notifier/src/idempotency"
+	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/consumer-notifier/src/notifier"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared/logger"
 )
 
@@ -33,7 +34,8 @@ func main() {
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
 
-	consumer := broker.New(cfg, log, logEvent(log, cfg.QueueName))
+	store := idempotency.NewMemory()
+	consumer := broker.New(cfg, log, notifier.Handle(store, log, cfg.QueueName))
 	consumerDone := make(chan struct{})
 	go func() {
 		defer close(consumerDone)
@@ -75,18 +77,5 @@ func main() {
 	case <-consumerDone:
 	case <-shutdownCtx.Done():
 		log.Error("consumer did not stop in time")
-	}
-}
-
-func logEvent(log *slog.Logger, queue string) broker.HandlerFunc {
-	return func(ctx context.Context, msg broker.Message) error {
-		log.InfoContext(ctx, "hazard_event_received",
-			"queue", queue,
-			"routing_key", msg.RoutingKey,
-			"message_id", msg.MessageID,
-			"redelivered", msg.Redelivered,
-			"event", msg.Body,
-		)
-		return nil
 	}
 }
