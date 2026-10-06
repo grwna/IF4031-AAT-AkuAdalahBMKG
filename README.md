@@ -216,35 +216,63 @@ Summary fields: `hazard_id`, `source`, `hazard_type`, `severity`, `area_name`, `
 
 ## 8. Triggering Test Scenarios per Problem
 
+### Automated E2E Test Suite & Interactive Live Demo
+
+```bash
+# 1. Run the complete End-to-End (E2E) test suite (Ketentuan 1-7 & Problem 1-5, including 60s TTL & Docker tests)
+./scripts/tests/test-e2e.sh
+
+# Run E2E in fast mode (skips 60s natural TTL wait) or for a specific problem only:
+./scripts/tests/test-e2e.sh --fast
+./scripts/tests/test-e2e.sh --problem p3
+
+# 2. Launch the Interactive Live Demo script (step-by-step with presenter prompts)
+./scripts/demo/demo.sh
+# Or jump directly to a specific Problem demo:
+./scripts/demo/demo.sh p1
+```
+
 ### P1 — Schema Evolution
 ```bash
 # Run the system with PVMBG's initial schema, observe the resulting HazardEvents
 # Then trigger a schema change without restarting anything:
-curl -X POST http://localhost:8082/admin/schema-version -d '{"confidence_level_enabled": true}'
-# Verify the Aggregator keeps producing valid HazardEvents, check logs/attributes
+curl -X POST http://localhost:8082/admin/schema-version \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <pvmbg-token>" \
+  -d '{"enabled": true}'
+# Verify the Aggregator keeps producing valid HazardEvents with attributes.confidence_level
 ```
 
 ### P2 — Concurrency & Graceful Degradation
 ```bash
-# Test BMKG-only latency while PVMBG delay is set to 3 seconds
-# [command/script to generate concurrent requests]
+# Test BMKG-only latency (<300ms p95) while PVMBG delay is up to 3s, plus sustained load test (>=50 VUs, 60s)
+./scripts/load-test/run-load-test.sh
 
-# Load test (>=50 parallel connections, 60 seconds)
-[k6/Locust command] scripts/load-test/[script-name]
+# Quick load test (55 VUs, 10s) or direct k6 invocation:
+./scripts/load-test/run-load-test.sh --quick
+k6 run scripts/load-test/k6-sustained.js
 
 # Simulate a PVMBG outage
-curl -X POST http://localhost:8082/admin/outage -d '{"enabled": true}'
-# ... observe degradation behavior ...
-curl -X POST http://localhost:8082/admin/outage -d '{"enabled": false}'
+curl -X POST http://localhost:8082/admin/outage \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <pvmbg-token>" \
+  -d '{"outage": true}'
+# Observe degradation behavior (source_status.PVMBG.status = "DEGRADED", stale_since populated)
+curl -X POST http://localhost:8082/admin/outage \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <pvmbg-token>" \
+  -d '{"outage": false}'
 ```
 
 ### P3 — Auth & Trust Domains
 ```bash
 # Show that a BMKG credential is rejected by PVMBG and vice versa
-curl -H "X-BMKG-Key: <bmkg-key>" http://localhost:8082/volcanic-reports  # should be 401/403
+curl -H "X-BMKG-Key: <bmkg-key>" http://localhost:8082/volcanic-reports          # 401
+curl -H "Authorization: Bearer <pvmbg-token>" http://localhost:8081/seismic-events # 401
 
 # Get a token (Media: media-client, Field Team: field-team, Ops: bnpb-ops)
 curl -X POST http://localhost:8084/token \
+  -H "Content-Type: application/json" \
   -d '{"grant_type":"client_credentials","client_id":"field-team","client_secret":"<field-secret>"}'
 
 # Media only receives summary fields (no source_ref_id, latitude, longitude, attributes)
@@ -261,38 +289,42 @@ curl -H "Authorization: Bearer <field-token>" http://localhost:8080/hazards/<haz
 curl -H "Authorization: Bearer <field-token>" http://localhost:8080/hazards                            # 401 TOKEN_EXPIRED
 
 # Refresh without logging in again, then use the new access token
-curl -X POST http://localhost:8084/refresh -d '{"refresh_token":"<refresh-token>"}'
+curl -X POST http://localhost:8084/refresh -H "Content-Type: application/json" -d '{"refresh_token":"<refresh-token>"}'
 curl -H "Authorization: Bearer <new-field-token>" http://localhost:8080/hazards                        # 200
 
 # Reusing the old refresh token should be 401
-curl -X POST http://localhost:8084/refresh -d '{"refresh_token":"<old-refresh-token>"}'
+curl -X POST http://localhost:8084/refresh -H "Content-Type: application/json" -d '{"refresh_token":"<old-refresh-token>"}'
 ```
 
 With Bruno: run the `auth` folder, then the `client-api` folder (CLI: `npx @usebruno/cli run auth client-api --env Local` from `.bruno/`). To show the expired token, use the Bruno app (tokens are kept between requests in the same session): run `auth`, wait more than 60 seconds, then run `client-api/Hazards Old Access Token` (expects `401 TOKEN_EXPIRED`).
 
 ### P4 — Microservice Architecture & Flexible Storage
 ```bash
-# Restart one container without disrupting the others
+# Stop/Restart one container without disrupting the others
+docker compose stop auth-service
+# Verify client-api keeps serving requests with active JWT tokens
+docker compose start auth-service
+
 docker compose restart aggregator
 # Verify other services keep responding during this process
 
 # Verify records from before and after confidence_level was introduced
-# coexist and are both readable
-[Canonical Store query command]
+# coexist in PostgreSQL JSONB and are both readable without schema migration
+docker compose exec canonical-store psql -U aggregator_user -d canonical_store -c \
+  "SELECT hazard_id, (attributes ? 'confidence_level') AS has_confidence_level, attributes FROM hazard_events WHERE hazard_type = 'VOLCANIC' ORDER BY (attributes ? 'confidence_level') DESC, occurred_at DESC LIMIT 6;"
 ```
 
 ### P5 — Pub/Sub Fan-out
 ```bash
 docker compose logs -f consumer-dashboard consumer-notifier
 
-# Publish an event
-
-# Stop one of the consumers, publish again, then restart it
+# Stop one of the consumers, wait for new events to be published, then restart it (catch-up)
 docker compose stop consumer-notifier
 docker compose start consumer-notifier
 
 # Add a new consumer without changing any producer code
 docker compose --profile p5-extra up -d consumer-pemda-volcano
+docker compose --profile p5-extra logs -f consumer-pemda-volcano
 ```
 
 ---

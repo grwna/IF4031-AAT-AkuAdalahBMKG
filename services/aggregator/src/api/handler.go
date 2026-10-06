@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"log/slog"
 	"net/http"
@@ -12,7 +11,7 @@ import (
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/domain"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/polling"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/store"
-	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared/logger"
+	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared/middleware"
 )
 
 type Server struct {
@@ -20,6 +19,7 @@ type Server struct {
 	tracker     *polling.StatusTracker
 	logger      *slog.Logger
 	router      *http.ServeMux
+	handler     http.Handler
 	rateLimiter chan struct{} // Semaphore channel untuk mengendalikan jumlah request bersamaan (Problem 2)
 }
 
@@ -35,6 +35,7 @@ func NewServer(store *store.PostgresStore, tracker *polling.StatusTracker, l *sl
 		rateLimiter: make(chan struct{}, maxConcurrent),
 	}
 	s.routes()
+	s.handler = middleware.CorrelationIDMiddleware(s.router)
 	return s
 }
 
@@ -57,18 +58,10 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Ambil atau buat X-Correlation-ID
-	correlationID := r.Header.Get("X-Correlation-ID")
-	if correlationID == "" {
-		correlationID = "gen-" + strconv.FormatInt(time.Now().UnixNano(), 36)
-	}
-
-	w.Header().Set("X-Correlation-ID", correlationID)
 	w.Header().Set("Content-Type", "application/json")
 
-	// Inject correlation ID ke context request
-	ctx := context.WithValue(r.Context(), logger.CorrelationKey, correlationID)
-	s.router.ServeHTTP(w, r.WithContext(ctx))
+	// 2. Menggunakan CorrelationIDMiddleware dari shared/middleware
+	s.handler.ServeHTTP(w, r)
 }
 
 // Helper untuk mengirimkan respons JSON error standar (§2)

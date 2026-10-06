@@ -29,3 +29,14 @@ func NewJSONLogger() *slog.Logger {
 	})
 	return slog.New(&ContextHandler{Handler: baseHandler})
 }
+
+// FromContext mengembalikan correlation_id dari context jika ada
+func FromContext(ctx context.Context) string {
+	if ctx == nil {
+		return ""
+	}
+	if id, ok := ctx.Value(CorrelationKey).(string); ok {
+		return id
+	}
+	return ""
+}

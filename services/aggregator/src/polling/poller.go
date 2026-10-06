@@ -12,7 +12,10 @@ import (
 
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/domain"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/mapping"
+	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/publisher"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/store"
+	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared/httpclient"
+	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared/logger"
 )
 
 // Tracker thread-safe untuk memantau status kesegaran data per sumber (BMKG & PVMBG)
@@ -76,18 +79,21 @@ type Poller struct {
 	store        *store.PostgresStore
 	tracker      *StatusTracker
 	logger       *slog.Logger
+	publisher    *publisher.Publisher
 	bmkgURL      string
 	bmkgKey      string
 	pvmbgURL     string
 	pvmbgToken   string
 	pollInterval time.Duration
-	httpClient   *http.Client
+	bmkgClient   *http.Client // Outbound HTTP Client ke BMKG dengan Transport logging latensi
+	pvmbgClient  *http.Client // Outbound HTTP Client ke PVMBG dengan Transport logging latensi
 }
 
 func NewPoller(
 	store *store.PostgresStore,
 	tracker *StatusTracker,
 	logger *slog.Logger,
+	pub *publisher.Publisher,
 	bmkgURL, bmkgKey, pvmbgURL, pvmbgToken string,
 	pollInterval time.Duration,
 ) *Poller {
@@ -95,13 +101,19 @@ func NewPoller(
 		store:        store,
 		tracker:      tracker,
 		logger:       logger,
+		publisher:    pub,
 		bmkgURL:      bmkgURL,
 		bmkgKey:      bmkgKey,
 		pvmbgURL:     pvmbgURL,
 		pvmbgToken:   pvmbgToken,
 		pollInterval: pollInterval,
-		httpClient: &http.Client{
-			Timeout: 5 * time.Second, // Timeout aman untuk polling
+		bmkgClient: &http.Client{
+			Timeout:   5 * time.Second,
+			Transport: httpclient.NewTransport(nil, logger, "bmkg"),
+		},
+		pvmbgClient: &http.Client{
+			Timeout:   5 * time.Second,
+			Transport: httpclient.NewTransport(nil, logger, "pvmbg"),
 		},
 	}
 }
@@ -115,6 +127,7 @@ func (p *Poller) Start(ctx context.Context) {
 	// Jalankan polling pertama kali langsung saat start
 	p.pollBMKG(ctx)
 	p.pollPVMBG(ctx)
+	p.FlushOutbox(ctx)
 
 	for {
 		select {
@@ -125,6 +138,7 @@ func (p *Poller) Start(ctx context.Context) {
 			// Polling dilakukan secara independen agar kelambatan PVMBG tidak menahan BMKG
 			go p.pollBMKG(ctx)
 			go p.pollPVMBG(ctx)
+			go p.FlushOutbox(ctx)
 		}
 	}
 }
@@ -141,7 +155,7 @@ func (p *Poller) pollBMKG(ctx context.Context) {
 	}
 	req.Header.Set("X-BMKG-Key", p.bmkgKey)
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.bmkgClient.Do(req)
 	if err != nil {
 		p.logger.Warn("Polling BMKG gagal", slog.String("error", err.Error()))
 		p.tracker.SetDegraded(domain.SourceBMKG, now, err.Error())
@@ -184,7 +198,7 @@ func (p *Poller) pollBMKG(ctx context.Context) {
 		tReq, err := http.NewRequestWithContext(ctx, http.MethodGet, tURL, nil)
 		if err == nil {
 			tReq.Header.Set("X-BMKG-Key", p.bmkgKey)
-			if tResp, err := p.httpClient.Do(tReq); err == nil && tResp.StatusCode == http.StatusOK {
+			if tResp, err := p.bmkgClient.Do(tReq); err == nil && tResp.StatusCode == http.StatusOK {
 				defer tResp.Body.Close()
 				var warnings []domain.TsunamiWarning
 				if tBody, err := io.ReadAll(tResp.Body); err == nil {
@@ -209,6 +223,7 @@ func (p *Poller) pollBMKG(ctx context.Context) {
 	}
 
 	p.tracker.SetSuccess(domain.SourceBMKG, now)
+	p.FlushOutbox(ctx)
 }
 
 // Polling laporan gunung api dari PVMBG
@@ -222,7 +237,7 @@ func (p *Poller) pollPVMBG(ctx context.Context) {
 	}
 	req.Header.Set("Authorization", "Bearer "+p.pvmbgToken)
 
-	resp, err := p.httpClient.Do(req)
+	resp, err := p.pvmbgClient.Do(req)
 	if err != nil {
 		p.logger.Warn("Polling PVMBG gagal (outage/network error)", slog.String("error", err.Error()))
 		p.tracker.SetDegraded(domain.SourcePVMBG, now, err.Error())
@@ -260,4 +275,44 @@ func (p *Poller) pollPVMBG(ctx context.Context) {
 	}
 
 	p.tracker.SetSuccess(domain.SourcePVMBG, now)
+	p.FlushOutbox(ctx)
+}
+
+// FlushOutbox memproses dan mem-publish seluruh event yang belum terkirim (is_published = FALSE) ke broker
+func (p *Poller) FlushOutbox(ctx context.Context) {
+	if p.publisher == nil || !p.publisher.IsConnected() {
+		return
+	}
+
+	events, err := p.store.GetUnpublishedEvents(ctx)
+	if err != nil {
+		p.logger.Error("Gagal mengambil event belum terpublish dari store", slog.String("error", err.Error()))
+		return
+	}
+
+	for _, ev := range events {
+		correlationID := logger.FromContext(ctx)
+		if correlationID == "" {
+			correlationID = fmt.Sprintf("poller-%d", time.Now().UnixNano())
+		}
+
+		if err := p.publisher.Publish(ctx, ev, correlationID); err != nil {
+			p.logger.Error("publish_failed",
+				slog.String("hazard_id", ev.HazardID),
+				slog.String("error", err.Error()),
+			)
+		} else {
+			if err := p.store.MarkAsPublished(ctx, ev.HazardID); err != nil {
+				p.logger.Error("Gagal memperbarui status is_published di store",
+					slog.String("hazard_id", ev.HazardID),
+					slog.String("error", err.Error()),
+				)
+			} else {
+				p.logger.Info("Berhasil publish hazard_event ke broker",
+					slog.String("hazard_id", ev.HazardID),
+					slog.String("severity", ev.Severity),
+				)
+			}
+		}
+	}
 }

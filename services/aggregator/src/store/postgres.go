@@ -70,9 +70,12 @@ func (s *PostgresStore) InitSchema(ctx context.Context) error {
 		longitude DOUBLE PRECISION,
 		occurred_at TIMESTAMPTZ NOT NULL,
 		ingested_at TIMESTAMPTZ NOT NULL,
-		attributes JSONB NOT NULL DEFAULT '{}'::jsonb
+		attributes JSONB NOT NULL DEFAULT '{}'::jsonb,
+		is_published BOOLEAN NOT NULL DEFAULT FALSE
 	);
+	ALTER TABLE hazard_events ADD COLUMN IF NOT EXISTS is_published BOOLEAN NOT NULL DEFAULT FALSE;
 	CREATE INDEX IF NOT EXISTS idx_hazard_events_cursor ON hazard_events (occurred_at DESC, hazard_id DESC);
+	CREATE INDEX IF NOT EXISTS idx_hazard_events_unpublished ON hazard_events (is_published) WHERE is_published = FALSE;
 	`
 	_, err := s.db.ExecContext(ctx, query)
 	return err
@@ -88,13 +91,21 @@ func (s *PostgresStore) UpsertHazardEvent(ctx context.Context, event domain.Haza
 	query := `
 	INSERT INTO hazard_events (
 		hazard_id, source, source_ref_id, hazard_type, severity, area_name,
-		latitude, longitude, occurred_at, ingested_at, attributes
-	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+		latitude, longitude, occurred_at, ingested_at, attributes, is_published
+	) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, FALSE)
 	ON CONFLICT (hazard_id) DO UPDATE SET
+		is_published = CASE 
+			WHEN hazard_events.severity IS DISTINCT FROM EXCLUDED.severity 
+			  OR hazard_events.attributes IS DISTINCT FROM EXCLUDED.attributes 
+			THEN FALSE 
+			ELSE hazard_events.is_published 
+		END,
 		severity = EXCLUDED.severity,
 		area_name = EXCLUDED.area_name,
 		latitude = EXCLUDED.latitude,
 		longitude = EXCLUDED.longitude,
+		occurred_at = EXCLUDED.occurred_at,
+		ingested_at = EXCLUDED.ingested_at,
 		attributes = EXCLUDED.attributes;
 	`
 	_, err = s.db.ExecContext(ctx, query,
@@ -270,4 +281,45 @@ func (s *PostgresStore) GetHazards(ctx context.Context, filter FilterParams) ([]
 	}
 
 	return events, nextCursor, nil
+}
+
+// GetUnpublishedEvents mengambil semua HazardEvent yang belum berhasil dipublish (is_published = FALSE)
+func (s *PostgresStore) GetUnpublishedEvents(ctx context.Context) ([]domain.HazardEvent, error) {
+	query := `
+	SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
+	       latitude, longitude, occurred_at, ingested_at, attributes, is_published
+	FROM hazard_events
+	WHERE is_published = FALSE
+	ORDER BY occurred_at ASC;
+	`
+	rows, err := s.db.QueryContext(ctx, query)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var events []domain.HazardEvent
+	for rows.Next() {
+		var h domain.HazardEvent
+		var attrJSON string
+		if err := rows.Scan(
+			&h.HazardID, &h.Source, &h.SourceRefID, &h.HazardType, &h.Severity, &h.AreaName,
+			&h.Latitude, &h.Longitude, &h.OccurredAt, &h.IngestedAt, &attrJSON, &h.IsPublished,
+		); err != nil {
+			return nil, err
+		}
+		if err := json.Unmarshal([]byte(attrJSON), &h.Attributes); err != nil {
+			h.Attributes = make(map[string]any)
+		}
+		events = append(events, h)
+	}
+
+	return events, rows.Err()
+}
+
+// MarkAsPublished memperbarui status is_published menjadi TRUE setelah mendapat konfirmasi dari broker
+func (s *PostgresStore) MarkAsPublished(ctx context.Context, hazardID string) error {
+	query := `UPDATE hazard_events SET is_published = TRUE WHERE hazard_id = $1;`
+	_, err := s.db.ExecContext(ctx, query, hazardID)
+	return err
 }

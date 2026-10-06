@@ -12,6 +12,7 @@ import (
 
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/api"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/polling"
+	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/publisher"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/store"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared/envutil"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared/logger"
@@ -32,6 +33,8 @@ func main() {
 	pvmbgURL := envutil.Str("PVMBG_URL", "")
 	pvmbgToken := envutil.Str("PVMBG_TOKEN", "")
 	pollIntervalStr := envutil.Str("POLL_INTERVAL", "")
+	rabbitURL := envutil.Str("RABBITMQ_URL", "")
+	exchangeName := envutil.Str("EXCHANGE_NAME", "hazard.events")
 
 	pollInterval, err := time.ParseDuration(pollIntervalStr)
 	if err != nil {
@@ -47,14 +50,18 @@ func main() {
 	defer pgStore.Close()
 	l.Info("Terhubung ke Canonical Store PostgreSQL")
 
-	// 4. Inisialisasi Status Tracker in-memory
-	tracker := polling.NewStatusTracker()
-
-	// 5. Inisialisasi & jalankan Poller background (BMKG & PVMBG)
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	poller := polling.NewPoller(pgStore, tracker, l, bmkgURL, bmkgKey, pvmbgURL, pvmbgToken, pollInterval)
+	// 4. Inisialisasi Publisher RabbitMQ
+	pub := publisher.NewPublisher(rabbitURL, exchangeName, l)
+	go pub.StartLoop(ctx)
+
+	// 5. Inisialisasi Status Tracker in-memory
+	tracker := polling.NewStatusTracker()
+
+	// 6. Inisialisasi & jalankan Poller background (BMKG & PVMBG)
+	poller := polling.NewPoller(pgStore, tracker, l, pub, bmkgURL, bmkgKey, pvmbgURL, pvmbgToken, pollInterval)
 	go poller.Start(ctx)
 
 	maxConcurrent := envutil.Int("MAX_CONCURRENT_REQUESTS", 100)

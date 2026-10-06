@@ -40,6 +40,7 @@ type HazardEvent struct {
 	OccurredAt  time.Time      `json:"occurred_at"`
 	IngestedAt  time.Time      `json:"ingested_at"`
 	Attributes  map[string]any `json:"attributes"` // Fleksibel: menampung field mentah & field dinamis baru
+	IsPublished bool           `json:"-"`          // Status pengiriman pesan ke broker (internal outbox)
 }
 
 // SourceStatus merepresentasikan status kesegaran data per sumber (§3.2)

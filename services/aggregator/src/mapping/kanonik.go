@@ -17,10 +17,19 @@ type VolcanoRef struct {
 // Tabel referensi statis gunung api (dikelola oleh BNPB)
 var VolcanoTable = map[string]VolcanoRef{
 	"v-merapi":   {Name: "Gunung Merapi", Lat: -7.5407, Lon: 110.4457},
+	"merapi":     {Name: "Gunung Merapi", Lat: -7.5407, Lon: 110.4457},
 	"v-sinabung": {Name: "Gunung Sinabung", Lat: 3.17, Lon: 98.392},
+	"sinabung":   {Name: "Gunung Sinabung", Lat: 3.17, Lon: 98.392},
 	"v-krakatau": {Name: "Anak Krakatau", Lat: -6.102, Lon: 105.423},
+	"krakatau":   {Name: "Anak Krakatau", Lat: -6.102, Lon: 105.423},
 	"v-agung":    {Name: "Gunung Agung", Lat: -8.342, Lon: 115.508},
+	"agung":      {Name: "Gunung Agung", Lat: -8.342, Lon: 115.508},
 	"v-semeru":   {Name: "Gunung Semeru", Lat: -8.108, Lon: 112.922},
+	"semeru":     {Name: "Gunung Semeru", Lat: -8.108, Lon: 112.922},
+	"v-marapi":   {Name: "Gunung Marapi", Lat: -0.381, Lon: 100.474},
+	"marapi":     {Name: "Gunung Marapi", Lat: -0.381, Lon: 100.474},
+	"v-lewotobi": {Name: "Gunung Lewotobi", Lat: -8.542, Lon: 122.775},
+	"lewotobi":   {Name: "Gunung Lewotobi", Lat: -8.542, Lon: 122.775},
 }
 
 // MapSeismicToHazard mengubah data SeismicEvent dari BMKG menjadi HazardEvent Kanonik

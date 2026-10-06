@@ -7,6 +7,7 @@ replace github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared => ../../shared
 require (
 	github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared v0.0.0-00010101000000-000000000000
 	github.com/jackc/pgx/v5 v5.5.5
+	github.com/rabbitmq/amqp091-go v1.15.0
 )
 
 require (
