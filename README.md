@@ -28,7 +28,7 @@ Full architecture diagram: see [`docs/architecture-diagram.*`](docs/architecture
 | Programming language | [ ] |
 | Web framework | [ ] |
 | Canonical Store database | [ ] |
-| Message broker | [ ] |
+| Message broker | RabbitMQ 4 |
 | Token format/library | JWT (Ed25519), golang-jwt/jwt v5 |
 | Refresh token store | Redis 7 |
 | Structured logging | [ ] |
@@ -58,6 +58,7 @@ project-root/
     ├── aggregator/
     ├── client-api/
     ├── auth-service/
+    ├── message-broker/
     ├── consumer-dashboard/
     └── consumer-notifier/
 ```
@@ -121,6 +122,22 @@ project-root/
 | `AGGREGATOR_TIMEOUT_MS` | Timeout for each call to the aggregator | `2000` |
 | `MAX_CONCURRENT_REQUESTS` | Data requests processed at once; extra requests get `429` | `100` |
 
+### Message Broker (`services/message-broker/.env.example`)
+| Variable | Description | Default |
+|---|---|---|
+| `RABBITMQ_DEFAULT_USER` | Broker user | `bnpb` |
+| `RABBITMQ_DEFAULT_PASS` | Broker password | - |
+
+### Consumers (`services/consumer-dashboard/.env.example`, `services/consumer-notifier/.env.example`)
+| Variable | Description | Default |
+|---|---|---|
+| `PORT` | Health check port | `8085` / `8086` |
+| `RABBITMQ_URL` | Broker URL, password must match `RABBITMQ_DEFAULT_PASS` | - |
+| `EXCHANGE_NAME` | Exchange name | `hazard.events` |
+| `QUEUE_NAME` | Queue name | `dashboard` / `notifier` |
+| `BINDING_KEYS` | Routing keys, comma-separated | `#` |
+| `PREFETCH` | Max unacked messages | `10` |
+
 ### Bruno (`.bruno/.env`)
 | Variable | Description |
 |---|---|
@@ -154,6 +171,8 @@ curl http://localhost:8081/health   # BMKG
 curl http://localhost:8082/health   # PVMBG
 curl http://localhost:8080/health   # Client-Facing API
 curl http://localhost:8084/health   # Auth Service
+docker compose ps                    # Message Broker & Consumers
+# RabbitMQ Management UI: http://localhost:15672
 # [add health checks for other services]
 ```
 
@@ -172,9 +191,10 @@ Seed data (≥20 historical records) is automatically available in BMKG & PVMBG 
 | Client-Facing API | 8080 | Endpoint for downstream clients |
 | Auth/Token Service | 8084 | Token issuance & refresh |
 | Auth Store | - | Redis for refresh tokens (internal) |
-| Message Broker | [ ] | HazardEvent fan-out |
-| Consumer – Dashboard | [ ] | Example subscriber 1 |
-| Consumer – Notifier | [ ] | Example subscriber 2 |
+| Message Broker | 5672 (internal), 15672 (UI) | HazardEvent pub/sub |
+| Consumer – Dashboard | 8085 (internal) | Example subscriber 1 |
+| Consumer – Notifier | 8086 (internal) | Example subscriber 2 |
+| Consumer – Pemda Volcano | 8085 (internal) | Extra subscriber for P5 (profile `p5-extra`) |
 
 ### Client-Facing API Endpoints
 
@@ -263,15 +283,16 @@ docker compose restart aggregator
 
 ### P5 — Pub/Sub Fan-out
 ```bash
-# Stop one of the consumers
-docker compose stop consumer-notifier
+docker compose logs -f consumer-dashboard consumer-notifier
 
-# Verify the producer and the other consumer keep working normally, then restart it
+# Publish an event
+
+# Stop one of the consumers, publish again, then restart it
+docker compose stop consumer-notifier
 docker compose start consumer-notifier
-# Observe whether events published while the consumer was down are caught up or lost
 
 # Add a new consumer without changing any producer code
-[steps to add a new consumer]
+docker compose --profile p5-extra up -d consumer-pemda-volcano
 ```
 
 ---
