@@ -19,7 +19,47 @@ services:
       - services/pvmbg-mock/.env
     restart: unless-stopped
 
-  # TODO: aggregator + canonical-store (no host ports)
+  canonical-store:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-aggregator_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?POSTGRES_PASSWORD is required in .env}
+      POSTGRES_DB: ${POSTGRES_DB:-canonical_store}
+    volumes:
+      - canonical-store-data:/var/lib/postgresql/data
+    networks:
+      - store-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aggregator_user} -d ${POSTGRES_DB:-canonical_store}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  aggregator:
+    build:
+      context: .
+      dockerfile: services/aggregator/Dockerfile
+    env_file:
+      - services/aggregator/.env
+    networks:
+      - default
+      - store-net
+    depends_on:
+      canonical-store:
+        condition: service_healthy
+      message-broker:
+        condition: service_healthy
+      bmkg-mock:
+        condition: service_started
+      pvmbg-mock:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
 
   client-api:
     build:
@@ -143,7 +183,10 @@ services:
 networks:
   auth-net:
     internal: true
+  store-net:
+    internal: true
 
 volumes:
   auth-store-data:
+  canonical-store-data:
   message-broker-data:

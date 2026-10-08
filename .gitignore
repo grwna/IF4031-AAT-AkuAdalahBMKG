@@ -53,3 +53,8 @@ _testmain.go
 # For example, set up .git/info/exclude or use a global .gitignore.
 
 .env
+services/*/.env
+.bruno/.env
+scripts/tests/reports/
+scripts/load-test/reports/
+scripts/demo/reports/

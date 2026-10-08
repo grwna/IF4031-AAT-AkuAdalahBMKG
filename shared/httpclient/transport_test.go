@@ -4,15 +4,22 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
+	"io"
 	"log/slog"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared/httpclient"
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared/logger"
 )
+
+type roundTripFunc func(req *http.Request) (*http.Response, error)
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req)
+}
 
 func newLogger(buf *bytes.Buffer) *slog.Logger {
 	return slog.New(&logger.ContextHandler{Handler: slog.NewJSONHandler(buf, nil)})
@@ -30,17 +37,20 @@ func lastLog(t *testing.T, buf *bytes.Buffer) map[string]any {
 
 func TestRoundTrip_PropagatesCorrelationIDAndLogs(t *testing.T) {
 	var gotHeader string
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotHeader = r.Header.Get("X-Correlation-ID")
-		w.WriteHeader(http.StatusTeapot)
-	}))
-	defer srv.Close()
+	mockBase := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotHeader = req.Header.Get("X-Correlation-ID")
+		return &http.Response{
+			StatusCode: http.StatusTeapot,
+			Body:       io.NopCloser(strings.NewReader("ok")),
+			Header:     make(http.Header),
+		}, nil
+	})
 
 	buf := &bytes.Buffer{}
-	client := &http.Client{Transport: httpclient.NewTransport(nil, newLogger(buf), "aggregator")}
+	client := &http.Client{Transport: httpclient.NewTransport(mockBase, newLogger(buf), "aggregator")}
 
 	ctx := context.WithValue(context.Background(), logger.CorrelationKey, "corr-123")
-	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, srv.URL+"/internal/hazards?token=secret", nil)
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, "http://mock-upstream/internal/hazards?token=secret", nil)
 	resp, err := client.Do(req)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -79,13 +89,17 @@ func TestRoundTrip_PropagatesCorrelationIDAndLogs(t *testing.T) {
 
 func TestRoundTrip_NoCorrelationIDInContext(t *testing.T) {
 	var gotHeader = "unset"
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotHeader = r.Header.Get("X-Correlation-ID")
-	}))
-	defer srv.Close()
+	mockBase := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		gotHeader = req.Header.Get("X-Correlation-ID")
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       io.NopCloser(strings.NewReader("ok")),
+			Header:     make(http.Header),
+		}, nil
+	})
 
-	client := &http.Client{Transport: httpclient.NewTransport(nil, newLogger(&bytes.Buffer{}), "bmkg")}
-	resp, err := client.Get(srv.URL)
+	client := &http.Client{Transport: httpclient.NewTransport(mockBase, newLogger(&bytes.Buffer{}), "bmkg")}
+	resp, err := client.Get("http://mock-upstream/seismic-events")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -97,13 +111,13 @@ func TestRoundTrip_NoCorrelationIDInContext(t *testing.T) {
 }
 
 func TestRoundTrip_ErrorIsLoggedAndReturned(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
-	url := srv.URL
-	srv.Close()
+	mockBase := roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		return nil, errors.New("connection reset by peer")
+	})
 
 	buf := &bytes.Buffer{}
-	client := &http.Client{Transport: httpclient.NewTransport(nil, newLogger(buf), "pvmbg")}
-	_, err := client.Get(url + "/volcanic-reports")
+	client := &http.Client{Transport: httpclient.NewTransport(mockBase, newLogger(buf), "pvmbg")}
+	_, err := client.Get("http://mock-upstream/volcanic-reports")
 	if err == nil {
 		t.Fatal("expected error from closed server")
 	}

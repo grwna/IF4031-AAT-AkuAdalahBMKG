@@ -167,13 +167,13 @@ cp .env.example .env
 docker compose up --build
 
 # Verify every service is healthy
-curl http://localhost:8081/health   # BMKG
-curl http://localhost:8082/health   # PVMBG
+curl http://localhost:8081/health   # BMKG Mock
+curl http://localhost:8082/health   # PVMBG Mock
+docker compose exec aggregator wget -qO- http://localhost:8083/health   # Aggregator (internal)
 curl http://localhost:8080/health   # Client-Facing API
 curl http://localhost:8084/health   # Auth Service
+# RabbitMQ Management UI: http://localhost:15672 (user: bnpb)
 docker compose ps                    # Message Broker & Consumers
-# RabbitMQ Management UI: http://localhost:15672
-# [add health checks for other services]
 ```
 
 Seed data (≥20 historical records) is automatically available in BMKG & PVMBG on first startup.
@@ -186,15 +186,15 @@ Seed data (≥20 historical records) is automatically available in BMKG & PVMBG 
 |---|---|---|
 | BMKG Mock | 8081 | Simulated seismic & tsunami data |
 | PVMBG Mock | 8082 | Simulated volcanic data |
-| Aggregator | [ ] | Polling, mapping, publishing to the broker |
-| Canonical Store | [ ] | HazardEvent storage |
-| Client-Facing API | 8080 | Endpoint for downstream clients |
-| Auth/Token Service | 8084 | Token issuance & refresh |
-| Auth Store | - | Redis for refresh tokens (internal) |
-| Message Broker | 5672 (internal), 15672 (UI) | HazardEvent pub/sub |
-| Consumer – Dashboard | 8085 (internal) | Example subscriber 1 |
-| Consumer – Notifier | 8086 (internal) | Example subscriber 2 |
-| Consumer – Pemda Volcano | 8085 (internal) | Extra subscriber for P5 (profile `p5-extra`) |
+| Aggregator | 8083 (internal) | Polling, canonical mapping, publishing to broker, & internal query API |
+| Canonical Store | 5432 (internal) | PostgreSQL JSONB HazardEvent storage (store-net) |
+| Client-Facing API | 8080 | Endpoint for downstream clients with scope enforcement |
+| Auth/Token Service | 8084 | Ed25519 JWT Token issuance & refresh with scope control |
+| Auth Store | 6379 (internal) | Redis for refresh tokens & rotation (auth-net) |
+| Message Broker | 5672 (internal), 15672 (UI) | RabbitMQ Topic Exchange HazardEvent pub/sub |
+| Consumer – Dashboard | 8085 (internal) | Event subscriber 1 (internal ops dashboard) |
+| Consumer – Notifier | 8086 (internal) | Event subscriber 2 (field team alert notifier) |
+| Consumer – Pemda Volcano | 8085 (profile: p5-extra) | Event subscriber 3 (regional volcano portal) |
 
 ### Client-Facing API Endpoints
 
@@ -216,35 +216,70 @@ Summary fields: `hazard_id`, `source`, `hazard_type`, `severity`, `area_name`, `
 
 ## 8. Triggering Test Scenarios per Problem
 
+### Automated E2E Test Suite & Live Demo Script
+
+Both `scripts/demo/demo.sh` and `scripts/tests/test-e2e.sh` output each test case in a standardized 5-line plain-text format (`task`, `expect`, `cmd`, `resp`, `res`) without ANSI colors or emojis, and support testing all problems or individual problems (`p0`, `p1`, `p2`, `p3`, `p4`, `p5`):
+
+```bash
+# 1. Run all tests with full M1 durations (includes 60s sustained load test in P2 & 60s TTL expiration wait in P3)
+./scripts/demo/demo.sh
+# or via test-e2e.sh:
+./scripts/tests/test-e2e.sh
+
+# 2. Run a specific problem only (p0, p1, p2, p3, p4, or p5):
+./scripts/demo/demo.sh p1
+./scripts/demo/demo.sh p2
+./scripts/demo/demo.sh p3
+./scripts/demo/demo.sh p4
+./scripts/demo/demo.sh p5
+# (also supports --problem <p0..p5>, e.g.: ./scripts/tests/test-e2e.sh --problem p3)
+
+# 3. Fast mode (10s load test & skips 60s TTL wait) or Interactive step-by-step pause mode (--step):
+./scripts/demo/demo.sh --fast
+./scripts/demo/demo.sh p1 --step
+```
+
 ### P1 — Schema Evolution
 ```bash
 # Run the system with PVMBG's initial schema, observe the resulting HazardEvents
 # Then trigger a schema change without restarting anything:
-curl -X POST http://localhost:8082/admin/schema-version -d '{"confidence_level_enabled": true}'
-# Verify the Aggregator keeps producing valid HazardEvents, check logs/attributes
+curl -X POST http://localhost:8082/admin/schema-version \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <pvmbg-token>" \
+  -d '{"enabled": true}'
+# Verify the Aggregator keeps producing valid HazardEvents with attributes.confidence_level
 ```
 
 ### P2 — Concurrency & Graceful Degradation
 ```bash
-# Test BMKG-only latency while PVMBG delay is set to 3 seconds
-# [command/script to generate concurrent requests]
+# Test BMKG-only latency (<300ms p95) while PVMBG delay is up to 3s, plus sustained load test (>=50 VUs, 60s)
+./scripts/load-test/run-load-test.sh
 
-# Load test (>=50 parallel connections, 60 seconds)
-[k6/Locust command] scripts/load-test/[script-name]
+# Quick load test (55 VUs, 10s) or direct k6 invocation:
+./scripts/load-test/run-load-test.sh --quick
+k6 run scripts/load-test/k6-sustained.js
 
 # Simulate a PVMBG outage
-curl -X POST http://localhost:8082/admin/outage -d '{"enabled": true}'
-# ... observe degradation behavior ...
-curl -X POST http://localhost:8082/admin/outage -d '{"enabled": false}'
+curl -X POST http://localhost:8082/admin/outage \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <pvmbg-token>" \
+  -d '{"outage": true}'
+# Observe degradation behavior (source_status.PVMBG.status = "DEGRADED", stale_since populated)
+curl -X POST http://localhost:8082/admin/outage \
+  -H "Content-Type: application/json" \
+  -H "Authorization: Bearer <pvmbg-token>" \
+  -d '{"outage": false}'
 ```
 
 ### P3 — Auth & Trust Domains
 ```bash
 # Show that a BMKG credential is rejected by PVMBG and vice versa
-curl -H "X-BMKG-Key: <bmkg-key>" http://localhost:8082/volcanic-reports  # should be 401/403
+curl -H "X-BMKG-Key: <bmkg-key>" http://localhost:8082/volcanic-reports          # 401
+curl -H "Authorization: Bearer <pvmbg-token>" http://localhost:8081/seismic-events # 401
 
 # Get a token (Media: media-client, Field Team: field-team, Ops: bnpb-ops)
 curl -X POST http://localhost:8084/token \
+  -H "Content-Type: application/json" \
   -d '{"grant_type":"client_credentials","client_id":"field-team","client_secret":"<field-secret>"}'
 
 # Media only receives summary fields (no source_ref_id, latitude, longitude, attributes)
@@ -261,38 +296,42 @@ curl -H "Authorization: Bearer <field-token>" http://localhost:8080/hazards/<haz
 curl -H "Authorization: Bearer <field-token>" http://localhost:8080/hazards                            # 401 TOKEN_EXPIRED
 
 # Refresh without logging in again, then use the new access token
-curl -X POST http://localhost:8084/refresh -d '{"refresh_token":"<refresh-token>"}'
+curl -X POST http://localhost:8084/refresh -H "Content-Type: application/json" -d '{"refresh_token":"<refresh-token>"}'
 curl -H "Authorization: Bearer <new-field-token>" http://localhost:8080/hazards                        # 200
 
 # Reusing the old refresh token should be 401
-curl -X POST http://localhost:8084/refresh -d '{"refresh_token":"<old-refresh-token>"}'
+curl -X POST http://localhost:8084/refresh -H "Content-Type: application/json" -d '{"refresh_token":"<old-refresh-token>"}'
 ```
 
 With Bruno: run the `auth` folder, then the `client-api` folder (CLI: `npx @usebruno/cli run auth client-api --env Local` from `.bruno/`). To show the expired token, use the Bruno app (tokens are kept between requests in the same session): run `auth`, wait more than 60 seconds, then run `client-api/Hazards Old Access Token` (expects `401 TOKEN_EXPIRED`).
 
 ### P4 — Microservice Architecture & Flexible Storage
 ```bash
-# Restart one container without disrupting the others
+# Stop/Restart one container without disrupting the others
+docker compose stop auth-service
+# Verify client-api keeps serving requests with active JWT tokens
+docker compose start auth-service
+
 docker compose restart aggregator
 # Verify other services keep responding during this process
 
 # Verify records from before and after confidence_level was introduced
-# coexist and are both readable
-[Canonical Store query command]
+# coexist in PostgreSQL JSONB and are both readable without schema migration
+docker compose exec canonical-store psql -U aggregator_user -d canonical_store -c \
+  "SELECT hazard_id, (attributes ? 'confidence_level') AS has_confidence_level, attributes FROM hazard_events WHERE hazard_type = 'VOLCANIC' ORDER BY (attributes ? 'confidence_level') DESC, occurred_at DESC LIMIT 6;"
 ```
 
 ### P5 — Pub/Sub Fan-out
 ```bash
 docker compose logs -f consumer-dashboard consumer-notifier
 
-# Publish an event
-
-# Stop one of the consumers, publish again, then restart it
+# Stop one of the consumers, wait for new events to be published, then restart it (catch-up)
 docker compose stop consumer-notifier
 docker compose start consumer-notifier
 
 # Add a new consumer without changing any producer code
 docker compose --profile p5-extra up -d consumer-pemda-volcano
+docker compose --profile p5-extra logs -f consumer-pemda-volcano
 ```
 
 ---
