@@ -47,7 +47,7 @@ func main() {
 		l.Error("Gagal terhubung ke Canonical Store", slog.String("error", err.Error()))
 		os.Exit(1)
 	}
-	defer pgStore.Close()
+	defer pgStore.Close() // defer -> memastikan koneksi ditutup saat program selesai  | biar clean
 	l.Info("Terhubung ke Canonical Store PostgreSQL")
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -55,14 +55,14 @@ func main() {
 
 	// 4. Inisialisasi Publisher RabbitMQ
 	pub := publisher.NewPublisher(rabbitURL, exchangeName, l)
-	go pub.StartLoop(ctx)
+	go pub.StartLoop(ctx) // dia pegang ctx --> start go routine buat publish ke rabbitmq, dia bakal jalan terus sampe ctx cancel
 
 	// 5. Inisialisasi Status Tracker in-memory
 	tracker := polling.NewStatusTracker()
 
 	// 6. Inisialisasi & jalankan Poller background (BMKG & PVMBG)
 	poller := polling.NewPoller(pgStore, tracker, l, pub, bmkgURL, bmkgKey, pvmbgURL, pvmbgToken, pollInterval)
-	go poller.Start(ctx)
+	go poller.Start(ctx) // dia pegang ctx --> start go routine buat polling ke bmkg & pvmbg, dia bakal jalan terus sampe ctx cancel
 
 	maxConcurrent := envutil.Int("MAX_CONCURRENT_REQUESTS", 100)
 
@@ -77,6 +77,7 @@ func main() {
 	}
 
 	// 7. Channel untuk menangkap sinyal OS shutdown (SIGINT / SIGTERM)
+	// untuk handle graceful shutdown -> dari interupt OS ato perintah kill kubernetes -> biar defer nya jalan
 	stopChan := make(chan os.Signal, 1)
 	signal.Notify(stopChan, os.Interrupt, syscall.SIGTERM)
 
@@ -85,7 +86,7 @@ func main() {
 		l.Info(fmt.Sprintf("HTTP Server Aggregator berjalan pada port :%s", port))
 		if err := httpServer.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			l.Error("HTTP server error", slog.String("error", err.Error()))
-			stopChan <- syscall.SIGTERM
+			stopChan <- syscall.SIGTERM // contoh: kalau ada error di server, kita kirim sinyal ke stopChan biar shutdown
 		}
 	}()
 

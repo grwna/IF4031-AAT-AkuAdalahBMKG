@@ -35,7 +35,7 @@ func NewServer(store *store.PostgresStore, tracker *polling.StatusTracker, l *sl
 		rateLimiter: make(chan struct{}, maxConcurrent),
 	}
 	s.routes()
-	s.handler = middleware.CorrelationIDMiddleware(s.router)
+	s.handler = middleware.CorrelationIDMiddleware(middleware.LoggingMiddleware(s.logger)(s.router))
 	return s
 }
 
@@ -156,7 +156,7 @@ func (s *Server) handleGetHazards(w http.ResponseWriter, r *http.Request) {
 			s.writeJSONError(w, http.StatusBadRequest, "INVALID_PARAMETER", "cursor tidak valid atau rusak")
 			return
 		}
-		s.logger.Error("Gagal mengambil hazards dari store", slog.String("error", err.Error()))
+		s.logger.ErrorContext(r.Context(), "Gagal mengambil hazards dari store", slog.String("error", err.Error()))
 		s.writeJSONError(w, http.StatusServiceUnavailable, "STORE_UNAVAILABLE", "Canonical store tidak terjangkau")
 		return
 	}
@@ -188,7 +188,7 @@ func (s *Server) handleGetHazardByID(w http.ResponseWriter, r *http.Request) {
 
 	event, err := s.store.GetHazardByID(r.Context(), hazardID)
 	if err != nil {
-		s.logger.Error("Gagal mengambil hazard by ID dari store", slog.String("hazard_id", hazardID), slog.String("error", err.Error()))
+		s.logger.ErrorContext(r.Context(), "Gagal mengambil hazard by ID dari store", slog.String("hazard_id", hazardID), slog.String("error", err.Error()))
 		s.writeJSONError(w, http.StatusServiceUnavailable, "STORE_UNAVAILABLE", "Canonical store tidak terjangkau")
 		return
 	}

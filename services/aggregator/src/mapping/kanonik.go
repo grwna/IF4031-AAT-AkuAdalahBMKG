@@ -57,20 +57,42 @@ func MapSeismicToHazard(seismic domain.SeismicEvent, warning *domain.TsunamiWarn
 		}
 	}
 
-	// 2. Susun map attributes (menampung detail spesifik seismik)
-	attrs := map[string]any{
-		"magnitude":         seismic.Magnitude,
-		"depth_km":          seismic.DepthKM,
-		"potential_tsunami": seismic.PotentialTsunami,
+	// 2. Susun map attributes (menampung detail spesifik seismik & field dinamis baru)
+	attrs := make(map[string]any)
+	for k, v := range seismic.RawFields {
+		// Abaikan field yang sudah dipetakan ke field kanonik utama
+		if k == "event_id" || k == "region_name" || k == "epicenter_lat" || k == "epicenter_lon" || k == "occurred_at" {
+			continue
+		}
+		attrs[k] = v
+	}
+
+	// Pastikan field standar seismik selalu ada
+	if _, ok := attrs["magnitude"]; !ok {
+		attrs["magnitude"] = seismic.Magnitude
+	}
+	if _, ok := attrs["depth_km"]; !ok {
+		attrs["depth_km"] = seismic.DepthKM
+	}
+	if _, ok := attrs["potential_tsunami"]; !ok {
+		attrs["potential_tsunami"] = seismic.PotentialTsunami
 	}
 
 	if warning != nil {
-		attrs["tsunami_warning"] = map[string]any{
+		warningAttrs := map[string]any{
 			"warning_id":        warning.WarningID,
 			"threat_level":      warning.ThreatLevel,
 			"affected_zones":    warning.AffectedZones,
 			"estimated_arrival": warning.EstimatedArrival,
 		}
+		// Masukkan field tambahan jika ada di TsunamiWarning
+		for k, v := range warning.RawFields {
+			if k == "warning_id" || k == "related_event_id" || k == "threat_level" || k == "affected_zones" || k == "estimated_arrival" {
+				continue
+			}
+			warningAttrs[k] = v
+		}
+		attrs["tsunami_warning"] = warningAttrs
 	}
 
 	// 3. Format ID Kanonik: BMKG-<event_id>

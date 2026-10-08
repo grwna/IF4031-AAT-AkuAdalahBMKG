@@ -45,6 +45,13 @@ func (t *StatusTracker) GetStatus() domain.MapSourceStatus {
 	return cp
 }
 
+func (t *StatusTracker) LastSuccessAt(source string) *time.Time {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+
+	return t.status[source].LastSuccessAt
+}
+
 func (t *StatusTracker) SetSuccess(source string, now time.Time) {
 	t.mu.Lock()
 	defer t.mu.Unlock()
@@ -145,9 +152,19 @@ func (p *Poller) Start(ctx context.Context) {
 
 // Polling data seismik dan tsunami dari BMKG
 func (p *Poller) pollBMKG(ctx context.Context) {
+	if logger.FromContext(ctx) == "" {
+		corrID := fmt.Sprintf("poller-bmkg-%d", time.Now().UnixNano())
+		ctx = context.WithValue(ctx, logger.CorrelationKey, corrID)
+	}
+
 	now := time.Now().UTC()
-	// Polling seismic events (mengambil data historis/terbaru)
+	lastSuccess := p.tracker.LastSuccessAt(domain.SourceBMKG)
+
+	// Polling seismic events (mengambil data historis saat pertama kali, lalu incremental via ?since=)
 	reqURL := fmt.Sprintf("%s/seismic-events", p.bmkgURL)
+	if lastSuccess != nil {
+		reqURL = fmt.Sprintf("%s?since=%s", reqURL, lastSuccess.UTC().Format(time.RFC3339))
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		p.tracker.SetDegraded(domain.SourceBMKG, now, err.Error())
@@ -157,7 +174,7 @@ func (p *Poller) pollBMKG(ctx context.Context) {
 
 	resp, err := p.bmkgClient.Do(req)
 	if err != nil {
-		p.logger.Warn("Polling BMKG gagal", slog.String("error", err.Error()))
+		p.logger.WarnContext(ctx, "Polling BMKG gagal", slog.String("error", err.Error()))
 		p.tracker.SetDegraded(domain.SourceBMKG, now, err.Error())
 		return
 	}
@@ -165,7 +182,7 @@ func (p *Poller) pollBMKG(ctx context.Context) {
 
 	if resp.StatusCode != http.StatusOK {
 		errStr := fmt.Sprintf("HTTP %d dari BMKG", resp.StatusCode)
-		p.logger.Warn("Polling BMKG mengembalikan status non-200", slog.Int("status", resp.StatusCode))
+		p.logger.WarnContext(ctx, "Polling BMKG mengembalikan status non-200", slog.Int("status", resp.StatusCode))
 		p.tracker.SetDegraded(domain.SourceBMKG, now, errStr)
 		return
 	}
@@ -178,7 +195,7 @@ func (p *Poller) pollBMKG(ctx context.Context) {
 
 	var events []domain.SeismicEvent
 	if err := json.Unmarshal(body, &events); err != nil {
-		p.logger.Error("Gagal unmarshal data BMKG", slog.String("error", err.Error()))
+		p.logger.ErrorContext(ctx, "Gagal unmarshal data BMKG", slog.String("error", err.Error()))
 		p.tracker.SetDegraded(domain.SourceBMKG, now, "JSON decode error")
 		return
 	}
@@ -195,6 +212,9 @@ func (p *Poller) pollBMKG(ctx context.Context) {
 	tsunamiMap := make(map[string]*domain.TsunamiWarning)
 	if hasPotentialTsunami {
 		tURL := fmt.Sprintf("%s/tsunami-warnings", p.bmkgURL)
+		if lastSuccess != nil {
+			tURL = fmt.Sprintf("%s?since=%s", tURL, lastSuccess.UTC().Format(time.RFC3339))
+		}
 		tReq, err := http.NewRequestWithContext(ctx, http.MethodGet, tURL, nil)
 		if err == nil {
 			tReq.Header.Set("X-BMKG-Key", p.bmkgKey)
@@ -218,7 +238,7 @@ func (p *Poller) pollBMKG(ctx context.Context) {
 		warning := tsunamiMap[e.EventID]
 		kanonik := mapping.MapSeismicToHazard(e, warning, ingestedAt)
 		if err := p.store.UpsertHazardEvent(ctx, kanonik); err != nil {
-			p.logger.Error("Gagal upsert event BMKG ke store", slog.String("hazard_id", kanonik.HazardID), slog.String("error", err.Error()))
+			p.logger.ErrorContext(ctx, "Gagal upsert event BMKG ke store", slog.String("hazard_id", kanonik.HazardID), slog.String("error", err.Error()))
 		}
 	}
 
@@ -228,8 +248,16 @@ func (p *Poller) pollBMKG(ctx context.Context) {
 
 // Polling laporan gunung api dari PVMBG
 func (p *Poller) pollPVMBG(ctx context.Context) {
+	if logger.FromContext(ctx) == "" {
+		corrID := fmt.Sprintf("poller-pvmbg-%d", time.Now().UnixNano())
+		ctx = context.WithValue(ctx, logger.CorrelationKey, corrID)
+	}
+
 	now := time.Now().UTC()
 	reqURL := fmt.Sprintf("%s/volcanic-reports", p.pvmbgURL)
+	if lastSuccess := p.tracker.LastSuccessAt(domain.SourcePVMBG); lastSuccess != nil {
+		reqURL = fmt.Sprintf("%s?since=%s", reqURL, lastSuccess.UTC().Format(time.RFC3339))
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, reqURL, nil)
 	if err != nil {
 		p.tracker.SetDegraded(domain.SourcePVMBG, now, err.Error())
@@ -239,7 +267,7 @@ func (p *Poller) pollPVMBG(ctx context.Context) {
 
 	resp, err := p.pvmbgClient.Do(req)
 	if err != nil {
-		p.logger.Warn("Polling PVMBG gagal (outage/network error)", slog.String("error", err.Error()))
+		p.logger.WarnContext(ctx, "Polling PVMBG gagal (outage/network error)", slog.String("error", err.Error()))
 		p.tracker.SetDegraded(domain.SourcePVMBG, now, err.Error())
 		return
 	}
@@ -247,7 +275,7 @@ func (p *Poller) pollPVMBG(ctx context.Context) {
 
 	if resp.StatusCode != http.StatusOK {
 		errStr := fmt.Sprintf("%d from pvmbg", resp.StatusCode)
-		p.logger.Warn("Polling PVMBG mengembalikan status non-200", slog.Int("status", resp.StatusCode))
+		p.logger.WarnContext(ctx, "Polling PVMBG mengembalikan status non-200", slog.Int("status", resp.StatusCode))
 		p.tracker.SetDegraded(domain.SourcePVMBG, now, errStr)
 		return
 	}
@@ -260,7 +288,7 @@ func (p *Poller) pollPVMBG(ctx context.Context) {
 
 	var reports []domain.VolcanicReport
 	if err := json.Unmarshal(body, &reports); err != nil {
-		p.logger.Error("Gagal unmarshal data PVMBG", slog.String("error", err.Error()))
+		p.logger.ErrorContext(ctx, "Gagal unmarshal data PVMBG", slog.String("error", err.Error()))
 		p.tracker.SetDegraded(domain.SourcePVMBG, now, "JSON decode error")
 		return
 	}
@@ -270,7 +298,7 @@ func (p *Poller) pollPVMBG(ctx context.Context) {
 	for _, r := range reports {
 		kanonik := mapping.MapVolcanicToHazard(r, ingestedAt)
 		if err := p.store.UpsertHazardEvent(ctx, kanonik); err != nil {
-			p.logger.Error("Gagal upsert event PVMBG ke store", slog.String("hazard_id", kanonik.HazardID), slog.String("error", err.Error()))
+			p.logger.ErrorContext(ctx, "Gagal upsert event PVMBG ke store", slog.String("hazard_id", kanonik.HazardID), slog.String("error", err.Error()))
 		}
 	}
 
@@ -284,31 +312,32 @@ func (p *Poller) FlushOutbox(ctx context.Context) {
 		return
 	}
 
+	correlationID := logger.FromContext(ctx)
+	if correlationID == "" {
+		correlationID = fmt.Sprintf("poller-%d", time.Now().UnixNano())
+		ctx = context.WithValue(ctx, logger.CorrelationKey, correlationID)
+	}
+
 	events, err := p.store.GetUnpublishedEvents(ctx)
 	if err != nil {
-		p.logger.Error("Gagal mengambil event belum terpublish dari store", slog.String("error", err.Error()))
+		p.logger.ErrorContext(ctx, "Gagal mengambil event belum terpublish dari store", slog.String("error", err.Error()))
 		return
 	}
 
 	for _, ev := range events {
-		correlationID := logger.FromContext(ctx)
-		if correlationID == "" {
-			correlationID = fmt.Sprintf("poller-%d", time.Now().UnixNano())
-		}
-
 		if err := p.publisher.Publish(ctx, ev, correlationID); err != nil {
-			p.logger.Error("publish_failed",
+			p.logger.ErrorContext(ctx, "publish_failed",
 				slog.String("hazard_id", ev.HazardID),
 				slog.String("error", err.Error()),
 			)
 		} else {
 			if err := p.store.MarkAsPublished(ctx, ev.HazardID); err != nil {
-				p.logger.Error("Gagal memperbarui status is_published di store",
+				p.logger.ErrorContext(ctx, "Gagal memperbarui status is_published di store",
 					slog.String("hazard_id", ev.HazardID),
 					slog.String("error", err.Error()),
 				)
 			} else {
-				p.logger.Info("Berhasil publish hazard_event ke broker",
+				p.logger.InfoContext(ctx, "Berhasil publish hazard_event ke broker",
 					slog.String("hazard_id", ev.HazardID),
 					slog.String("severity", ev.Severity),
 				)

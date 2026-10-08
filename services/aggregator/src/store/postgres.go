@@ -36,8 +36,8 @@ func NewPostgresStore(dbURL string) (*PostgresStore, error) {
 	}
 
 	// Konfigurasi connection pool
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(5)
+	db.SetMaxOpenConns(100)
+	db.SetMaxIdleConns(25)
 	db.SetConnMaxLifetime(15 * time.Minute)
 
 	if err := db.Ping(); err != nil {

@@ -1,14 +1,17 @@
 package api
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/polling"
+	sharedlogger "github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared/logger"
 )
 
 func TestHealthEndpoint(t *testing.T) {
@@ -82,4 +85,30 @@ func TestRateLimiter(t *testing.T) {
 
 	// Unblock rate limiter channel
 	<-server.rateLimiter
+}
+
+func TestRequestLoggingWithCorrelationID(t *testing.T) {
+	var buf bytes.Buffer
+	baseHandler := slog.NewJSONHandler(&buf, nil)
+	logger := slog.New(&sharedlogger.ContextHandler{Handler: baseHandler})
+	tracker := polling.NewStatusTracker()
+	server := NewServer(nil, tracker, logger, 100)
+
+	req := httptest.NewRequest(http.MethodGet, "/internal/source-status", nil)
+	req.Header.Set("X-Correlation-ID", "test-corr-123")
+	rec := httptest.NewRecorder()
+
+	server.ServeHTTP(rec, req)
+
+	if rec.Header().Get("X-Correlation-ID") != "test-corr-123" {
+		t.Errorf("expected X-Correlation-ID test-corr-123, got %s", rec.Header().Get("X-Correlation-ID"))
+	}
+
+	logOutput := buf.String()
+	if !strings.Contains(logOutput, `"msg":"request"`) {
+		t.Errorf("expected request log line, got: %s", logOutput)
+	}
+	if !strings.Contains(logOutput, `"correlation_id":"test-corr-123"`) {
+		t.Errorf("expected correlation_id in log line, got: %s", logOutput)
+	}
 }

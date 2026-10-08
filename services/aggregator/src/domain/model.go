@@ -56,23 +56,61 @@ type MapSourceStatus map[string]SourceStatus
 
 // Struct data mentah dari API BMKG (SeismicEvent)
 type SeismicEvent struct {
-	EventID          string    `json:"event_id"`
-	Magnitude        float64   `json:"magnitude"`
-	DepthKM          float64   `json:"depth_km"`
-	EpicenterLat     float64   `json:"epicenter_lat"`
-	EpicenterLon     float64   `json:"epicenter_lon"`
-	RegionName       string    `json:"region_name"`
-	OccurredAt       time.Time `json:"occurred_at"`
-	PotentialTsunami bool      `json:"potential_tsunami"`
+	EventID          string         `json:"event_id"`
+	Magnitude        float64        `json:"magnitude"`
+	DepthKM          float64        `json:"depth_km"`
+	EpicenterLat     float64        `json:"epicenter_lat"`
+	EpicenterLon     float64        `json:"epicenter_lon"`
+	RegionName       string         `json:"region_name"`
+	OccurredAt       time.Time      `json:"occurred_at"`
+	PotentialTsunami bool           `json:"potential_tsunami"`
+	RawFields        map[string]any `json:"-"` // Menyimpan seluruh field JSON mentah
+}
+
+func (s *SeismicEvent) UnmarshalJSON(data []byte) error {
+	type Alias SeismicEvent
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(s),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	s.RawFields = raw
+	return nil
 }
 
 // Struct data mentah dari API BMKG (TsunamiWarning)
 type TsunamiWarning struct {
-	WarningID        string     `json:"warning_id"`
-	RelatedEventID   string     `json:"related_event_id"`
-	ThreatLevel      string     `json:"threat_level"` // "Waspada", "Siaga", "Awas"
-	AffectedZones    []string   `json:"affected_zones"`
-	EstimatedArrival *time.Time `json:"estimated_arrival,omitempty"`
+	WarningID        string         `json:"warning_id"`
+	RelatedEventID   string         `json:"related_event_id"`
+	ThreatLevel      string         `json:"threat_level"` // "Waspada", "Siaga", "Awas"
+	AffectedZones    []string       `json:"affected_zones"`
+	EstimatedArrival *time.Time     `json:"estimated_arrival,omitempty"`
+	RawFields        map[string]any `json:"-"` // Menyimpan seluruh field JSON mentah
+}
+
+func (t *TsunamiWarning) UnmarshalJSON(data []byte) error {
+	type Alias TsunamiWarning
+	aux := &struct {
+		*Alias
+	}{
+		Alias: (*Alias)(t),
+	}
+	if err := json.Unmarshal(data, aux); err != nil {
+		return err
+	}
+	var raw map[string]any
+	if err := json.Unmarshal(data, &raw); err != nil {
+		return err
+	}
+	t.RawFields = raw
+	return nil
 }
 
 // Struct data mentah dari API PVMBG (VolcanicReport)

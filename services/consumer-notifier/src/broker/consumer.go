@@ -166,6 +166,15 @@ func (c *Consumer) process(ctx context.Context, d amqp.Delivery) {
 		RoutingKey:  d.RoutingKey,
 		Redelivered: d.Redelivered,
 	}
+
+	c.log.InfoContext(ctx, "hazard_event_received",
+		"queue", c.cfg.QueueName,
+		"routing_key", d.RoutingKey,
+		"message_id", d.MessageId,
+		"redelivered", d.Redelivered,
+		"event", msg.Body,
+	)
+
 	if err := c.handle(ctx, msg); err != nil {
 		c.log.WarnContext(ctx, "message_requeued",
 			"queue", c.cfg.QueueName,
