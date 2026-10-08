@@ -239,6 +239,60 @@ assert_fail() {
 # ==============================================================================
 
 check_dependencies
+
+# Deteksi apakah Aggregator diakses via docker compose exec (karena port 8083 internal di Docker network)
+AGG_EXEC_MODE="false"
+if ! curl -s -m 1 "${AGGREGATOR_URL}/health" >/dev/null 2>&1; then
+    if command -v docker >/dev/null 2>&1 && (cd "$PROJECT_ROOT" && docker compose ps -q aggregator 2>/dev/null | grep -q .); then
+        AGG_EXEC_MODE="true"
+    fi
+fi
+
+agg_curl_with_code() {
+    local path="$1"
+    local corr_id="${2:-}"
+    if [[ "$AGG_EXEC_MODE" == "true" ]]; then
+        local body
+        if [[ -n "$corr_id" ]]; then
+            if body=$(cd "$PROJECT_ROOT" && docker compose exec -T aggregator wget -qO- --header="X-Correlation-ID: ${corr_id}" "http://localhost:8083${path}" 2>/dev/null); then
+                printf "%s\n200" "$body"
+            else
+                printf "\n000"
+            fi
+        else
+            if body=$(cd "$PROJECT_ROOT" && docker compose exec -T aggregator wget -qO- "http://localhost:8083${path}" 2>/dev/null); then
+                printf "%s\n200" "$body"
+            else
+                printf "\n000"
+            fi
+        fi
+    else
+        if [[ -n "$corr_id" ]]; then
+            curl -s -w "\n%{http_code}" -H "X-Correlation-ID: ${corr_id}" "${AGGREGATOR_URL}${path}" || echo -e "\n000"
+        else
+            curl -s -w "\n%{http_code}" "${AGGREGATOR_URL}${path}" || echo -e "\n000"
+        fi
+    fi
+}
+
+agg_curl_body() {
+    local path="$1"
+    local corr_id="${2:-}"
+    if [[ "$AGG_EXEC_MODE" == "true" ]]; then
+        if [[ -n "$corr_id" ]]; then
+            (cd "$PROJECT_ROOT" && docker compose exec -T aggregator wget -qO- --header="X-Correlation-ID: ${corr_id}" "http://localhost:8083${path}" 2>/dev/null) || echo ""
+        else
+            (cd "$PROJECT_ROOT" && docker compose exec -T aggregator wget -qO- "http://localhost:8083${path}" 2>/dev/null) || echo ""
+        fi
+    else
+        if [[ -n "$corr_id" ]]; then
+            curl -s -H "X-Correlation-ID: ${corr_id}" "${AGGREGATOR_URL}${path}" || echo ""
+        else
+            curl -s "${AGGREGATOR_URL}${path}" || echo ""
+        fi
+    fi
+}
+
 print_banner
 
 # ------------------------------------------------------------------------------
@@ -246,11 +300,11 @@ print_banner
 # ------------------------------------------------------------------------------
 assert_start "P1/P4: Health Check & Source Status API (Aggregator)"
 
-HEALTH_RESP=$(curl -s -w "\n%{http_code}" "${AGGREGATOR_URL}/health" || echo -e "\n000")
+HEALTH_RESP=$(agg_curl_with_code "/health")
 HEALTH_CODE=$(echo "$HEALTH_RESP" | tail -n 1)
 HEALTH_BODY=$(echo "$HEALTH_RESP" | sed '$d')
 
-STATUS_RESP=$(curl -s -w "\n%{http_code}" -H "X-Correlation-ID: test-health-123" "${AGGREGATOR_URL}/internal/source-status" || echo -e "\n000")
+STATUS_RESP=$(agg_curl_with_code "/internal/source-status" "test-health-123")
 STATUS_CODE=$(echo "$STATUS_RESP" | tail -n 1)
 STATUS_BODY=$(echo "$STATUS_RESP" | sed '$d')
 
@@ -292,7 +346,7 @@ else
     sleep 4
 
     # Step 2b: Ambil hazards vulkanik dari Aggregator
-    HAZARDS_RESP=$(curl -s -w "\n%{http_code}" -H "X-Correlation-ID: test-p1-schema" "${AGGREGATOR_URL}/internal/hazards?type=VOLCANIC&limit=20" || echo -e "\n000")
+    HAZARDS_RESP=$(agg_curl_with_code "/internal/hazards?type=VOLCANIC&limit=20" "test-p1-schema")
     HAZARDS_CODE=$(echo "$HAZARDS_RESP" | tail -n 1)
     HAZARDS_BODY=$(echo "$HAZARDS_RESP" | sed '$d')
 
@@ -330,18 +384,40 @@ LATENCIES=()
 FAILED_LATENCY_REQ=0
 
 echo -e "  ${YELLOW}ℹ Mengirim ${LATENCY_SAMPLES} permintaan paralel/beruntun untuk data SEISMIC...${NC}"
-for ((i=1; i<=LATENCY_SAMPLES; i++)); do
-    START_TIME=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || date +%s%3N)
-    HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Correlation-ID: test-p2-latency-$i" "${AGGREGATOR_URL}/internal/hazards?type=SEISMIC&limit=10" || echo "000")
-    END_TIME=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || date +%s%3N)
-    
-    DURATION=$((END_TIME - START_TIME))
-    if [[ "$HTTP_CODE" == "200" ]]; then
-        LATENCIES+=("$DURATION")
-    else
-        FAILED_LATENCY_REQ=$((FAILED_LATENCY_REQ + 1))
-    fi
-done
+if [[ "$AGG_EXEC_MODE" == "true" ]]; then
+    RAW_TIMES=$(cd "$PROJECT_ROOT" && docker compose exec -T aggregator sh -c '
+        for i in $(seq 1 '"$LATENCY_SAMPLES"'); do
+            t0=$(awk "{print int(\$1*1000)}" /proc/uptime)
+            if wget -qO /dev/null --header="X-Correlation-ID: test-p2-latency-$i" "http://localhost:8083/internal/hazards?type=SEISMIC&limit=10" 2>/dev/null; then
+                t1=$(awk "{print int(\$1*1000)}" /proc/uptime)
+                echo "OK $((t1 - t0))"
+            else
+                echo "FAIL 0"
+            fi
+        done
+    ' 2>/dev/null || true)
+    while read -r st dur; do
+        [[ -z "$st" ]] && continue
+        if [[ "$st" == "OK" ]]; then
+            LATENCIES+=("$dur")
+        else
+            FAILED_LATENCY_REQ=$((FAILED_LATENCY_REQ + 1))
+        fi
+    done <<< "$RAW_TIMES"
+else
+    for ((i=1; i<=LATENCY_SAMPLES; i++)); do
+        START_TIME=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || date +%s%3N)
+        HTTP_CODE=$(curl -s -o /dev/null -w "%{http_code}" -H "X-Correlation-ID: test-p2-latency-$i" "${AGGREGATOR_URL}/internal/hazards?type=SEISMIC&limit=10" || echo "000")
+        END_TIME=$(python3 -c 'import time; print(int(time.time() * 1000))' 2>/dev/null || date +%s%3N)
+        
+        DURATION=$((END_TIME - START_TIME))
+        if [[ "$HTTP_CODE" == "200" ]]; then
+            LATENCIES+=("$DURATION")
+        else
+            FAILED_LATENCY_REQ=$((FAILED_LATENCY_REQ + 1))
+        fi
+    done
+fi
 
 if [[ "${#LATENCIES[@]}" -gt 0 ]]; then
     SORTED_LATENCIES=($(printf '%s\n' "${LATENCIES[@]}" | sort -n))
@@ -391,7 +467,7 @@ else
     sleep 4
 
     # Step 4b: Minta data dari Aggregator saat PVMBG outage
-    OUTAGE_HAZARDS_RESP=$(curl -s -w "\n%{http_code}" -H "X-Correlation-ID: test-p2-outage" "${AGGREGATOR_URL}/internal/hazards" || echo -e "\n000")
+    OUTAGE_HAZARDS_RESP=$(agg_curl_with_code "/internal/hazards" "test-p2-outage")
     OUTAGE_HAZARDS_CODE=$(echo "$OUTAGE_HAZARDS_RESP" | tail -n 1)
     OUTAGE_HAZARDS_BODY=$(echo "$OUTAGE_HAZARDS_RESP" | sed '$d')
 
@@ -423,7 +499,7 @@ else
     RECOVERED_STATUS="UNKNOWN"
     for ((attempt=1; attempt<=8; attempt++)); do
         sleep 1
-        RECOVERY_RESP=$(curl -s -H "X-Correlation-ID: test-p2-recovery-$attempt" "${AGGREGATOR_URL}/internal/source-status" || echo "")
+        RECOVERY_RESP=$(agg_curl_body "/internal/source-status" "test-p2-recovery-$attempt")
         RECOVERED_STATUS=$(echo "$RECOVERY_RESP" | jq -r '.source_status.PVMBG.status // "UNKNOWN"')
         if [[ "$RECOVERED_STATUS" == "UP" ]]; then
             break
@@ -442,7 +518,7 @@ fi
 # ------------------------------------------------------------------------------
 assert_start "P4: Validasi Kontrak API Internal & Format HazardEvent Kanonik"
 
-CONTRACT_RESP=$(curl -s -w "\n%{http_code}" -H "X-Correlation-ID: test-p4-contract" "${AGGREGATOR_URL}/internal/hazards?limit=5" || echo -e "\n000")
+CONTRACT_RESP=$(agg_curl_with_code "/internal/hazards?limit=5" "test-p4-contract")
 CONTRACT_CODE=$(echo "$CONTRACT_RESP" | tail -n 1)
 CONTRACT_BODY=$(echo "$CONTRACT_RESP" | sed '$d')
 
@@ -459,7 +535,7 @@ if [[ -n "$VALID_FIELDS" ]] && [[ "$VALID_FIELDS" != "null" ]]; then
     if [[ "$VALID_FIELDS" =~ ^(BMKG|PVMBG)-.+ ]]; then
         NEXT_CURSOR=$(echo "$CONTRACT_BODY" | jq -r '.next_cursor // ""')
         if [[ -n "$NEXT_CURSOR" ]] && [[ "$NEXT_CURSOR" != "null" ]]; then
-            PAGED_RESP=$(curl -s -H "X-Correlation-ID: test-p4-cursor" "${AGGREGATOR_URL}/internal/hazards?limit=5&cursor=${NEXT_CURSOR}" || echo "")
+            PAGED_RESP=$(agg_curl_body "/internal/hazards?limit=5&cursor=${NEXT_CURSOR}" "test-p4-cursor")
             PAGED_COUNT=$(echo "$PAGED_RESP" | jq '.data | length')
             if [[ "$PAGED_COUNT" -gt 0 ]]; then
                 assert_pass "Format HazardEvent Kanonik valid (ID: ${VALID_FIELDS}) dan pagination berbasis 'next_cursor' bekerja dengan benar."

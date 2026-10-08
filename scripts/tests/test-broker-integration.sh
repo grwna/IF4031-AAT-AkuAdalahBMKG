@@ -78,15 +78,26 @@ log_test() {
     fi
 }
 
+# Helper untuk memanggil endpoint internal Aggregator (via docker compose exec karena port 8083 tidak di-publish ke host)
+agg_get() {
+    local path="$1"
+    if curl -s -f -m 1 "${AGGREGATOR_URL}${path}" 2>/dev/null; then
+        return 0
+    elif command -v docker >/dev/null 2>&1 && (cd "$PROJECT_ROOT" && docker compose exec -T aggregator wget -qO- "http://localhost:8083${path}" 2>/dev/null); then
+        return 0
+    fi
+    return 1
+}
+
 # 1. Health Check Services
 test_services_health() {
     echo -e "\n${BLUE}${BOLD}=== 1. Checking Service Health ===${NC}"
     
     # Aggregator Health
-    if curl -s -f "${AGGREGATOR_URL}/health" >/dev/null; then
-        log_test "Aggregator Service Health Check" "PASS" "Aggregator endpoint /health returned HTTP 200"
+    if agg_get "/health" >/dev/null; then
+        log_test "Aggregator Service Health Check" "PASS" "Aggregator endpoint /health returned HTTP 200 (internal Docker network)"
     else
-        log_test "Aggregator Service Health Check" "FAIL" "Could not connect to Aggregator at ${AGGREGATOR_URL}"
+        log_test "Aggregator Service Health Check" "FAIL" "Could not connect to Aggregator via docker compose exec or ${AGGREGATOR_URL}"
     fi
 
     # RabbitMQ Management API Health
@@ -134,7 +145,7 @@ test_event_publishing() {
 
     # Query Aggregator hazards endpoint
     local hazards_res
-    hazards_res=$(curl -s "${AGGREGATOR_URL}/internal/hazards?limit=10" || true)
+    hazards_res=$(agg_get "/internal/hazards?limit=10" || true)
 
     if echo "$hazards_res" | grep -q '"data"'; then
         log_test "Aggregator Hazard Records Retrieval" "PASS" "Successfully fetched internal hazards list from Aggregator"

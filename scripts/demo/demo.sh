@@ -318,13 +318,22 @@ if should_run "p0"; then
         "$([[ "$C_PVMBG_H" == "200" ]] && echo true || echo false)" \
         "PVMBG Mock mengembalikan HTTP ${C_PVMBG_H} == 200 dengan status ok"
 
-    R_AGG_H=$(curl -s "${AGGREGATOR_URL}/health" || true)
-    C_AGG_H=$(curl -s -o /dev/null -w "%{http_code}" "${AGGREGATOR_URL}/health" || echo "000")
-    print_step_result \
-        "curl -s ${AGGREGATOR_URL}/health" \
-        "$R_AGG_H" \
-        "$([[ "$C_AGG_H" == "200" ]] && echo true || echo false)" \
-        "Aggregator mengembalikan HTTP ${C_AGG_H} == 200 dengan status UP"
+    if [[ "$NO_DOCKER" == "false" ]]; then
+        R_AGG_H=$(cd "$PROJECT_ROOT" && docker compose exec -T aggregator wget -qO- "http://localhost:${AGGREGATOR_PORT}/health" 2>/dev/null || echo "")
+        print_step_result \
+            "docker compose exec -T aggregator wget -qO- http://localhost:${AGGREGATOR_PORT}/health" \
+            "$R_AGG_H" \
+            "$([[ -n "$R_AGG_H" ]] && echo true || echo false)" \
+            "Aggregator (internal) health endpoint merespons status UP"
+    else
+        R_AGG_H=$(curl -s "${AGGREGATOR_URL}/health" || true)
+        C_AGG_H=$(curl -s -o /dev/null -w "%{http_code}" "${AGGREGATOR_URL}/health" || echo "000")
+        print_step_result \
+            "curl -s ${AGGREGATOR_URL}/health" \
+            "$R_AGG_H" \
+            "$([[ "$C_AGG_H" == "200" ]] && echo true || echo false)" \
+            "Aggregator mengembalikan HTTP ${C_AGG_H} == 200 dengan status UP"
+    fi
 
     R_API_H=$(curl -s "${CLIENT_API_URL}/health" || true)
     C_API_H=$(curl -s -o /dev/null -w "%{http_code}" "${CLIENT_API_URL}/health" || echo "000")
@@ -396,7 +405,7 @@ if should_run "p0"; then
     BMKG_SEC=$(echo "$R_BMKG_TIME" | jq -r '.time_total_seconds')
     BMKG_TIME_OK=$(python3 -c "print('true' if 0.045 <= float('${BMKG_SEC}') < 0.40 else 'false')")
     print_step_result \
-        "curl -s -o /dev/null -w '{\"service\":\"bmkg-mock\",\"http_code\":%{http_code},\"time_total_seconds\":%{time_total}}' -H 'X-BMKG-Key: <bmkg-key>' ${BMKG_URL}/seismic-events" \
+        "curl -s -o /dev/null -w '{\"service\":\"bmkg-mock\",\"http_code\":%{http_code},\"time_total_seconds\":%{time_total}}' -H 'X-BMKG-Key: ${BMKG_API_KEY}' ${BMKG_URL}/seismic-events" \
         "$R_BMKG_TIME" \
         "$BMKG_TIME_OK" \
         "Response time BMKG = ${BMKG_SEC}s (< 0.40s, sesuai kontrak delay tetap 50-150 ms)"
@@ -405,7 +414,7 @@ if should_run "p0"; then
     PVMBG_SEC=$(echo "$R_PVMBG_TIME" | jq -r '.time_total_seconds')
     PVMBG_TIME_OK=$(python3 -c "print('true' if float('${PVMBG_SEC}') >= 0.45 else 'false')")
     print_step_result \
-        "curl -s -o /dev/null -w '{\"service\":\"pvmbg-mock\",\"http_code\":%{http_code},\"time_total_seconds\":%{time_total}}' -H 'Authorization: Bearer <pvmbg-token>' ${PVMBG_URL}/volcanic-reports" \
+        "curl -s -o /dev/null -w '{\"service\":\"pvmbg-mock\",\"http_code\":%{http_code},\"time_total_seconds\":%{time_total}}' -H 'Authorization: Bearer ${PVMBG_TOKEN}' ${PVMBG_URL}/volcanic-reports" \
         "$R_PVMBG_TIME" \
         "$PVMBG_TIME_OK" \
         "Response time PVMBG = ${PVMBG_SEC}s (>= 0.50s, sesuai kontrak delay acak 500-3000 ms)"
@@ -419,7 +428,7 @@ if should_run "p0"; then
     CORR_ID="corr-m1-trace-$(date +%s)"
     R_CORR_API=$(curl -s -H "Authorization: Bearer ${OPS_TOK}" -H "X-Correlation-ID: ${CORR_ID}" "${CLIENT_API_URL}/hazards?limit=1" || echo "{}")
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <ops-token>' -H 'X-Correlation-ID: ${CORR_ID}' '${CLIENT_API_URL}/hazards?limit=1'" \
+        "curl -s -H 'Authorization: Bearer ${OPS_TOK}' -H 'X-Correlation-ID: ${CORR_ID}' '${CLIENT_API_URL}/hazards?limit=1'" \
         "$R_CORR_API" \
         "$([[ -n "$R_CORR_API" && "$R_CORR_API" != "{}" ]] && echo true || echo false)" \
         "Client-Facing API mengembalikan HTTP 200 untuk request ber-header X-Correlation-ID: ${CORR_ID}"
@@ -427,11 +436,13 @@ if should_run "p0"; then
     if [[ "$NO_DOCKER" == "false" ]]; then
         sleep 1
         R_CORR_LOG_API=$(cd "$PROJECT_ROOT" && docker compose logs --tail=500 client-api 2>/dev/null | grep "$CORR_ID" | grep "outbound_call" | tail -n 1 || true)
+        CMD_CORR_LOG_API="docker compose logs --tail=500 client-api | grep '${CORR_ID}' | grep 'outbound_call' | tail -n 1"
         if [[ -z "$R_CORR_LOG_API" ]]; then
             R_CORR_LOG_API=$(cd "$PROJECT_ROOT" && docker compose logs --tail=500 client-api 2>/dev/null | grep "$CORR_ID" | tail -n 1 || true)
+            CMD_CORR_LOG_API="docker compose logs --tail=500 client-api | grep '${CORR_ID}' | tail -n 1"
         fi
         print_step_result \
-            "docker compose logs --tail=500 client-api | grep '${CORR_ID}' | tail -n 1" \
+            "$CMD_CORR_LOG_API" \
             "$R_CORR_LOG_API" \
             "$([[ -n "$R_CORR_LOG_API" ]] && echo true || echo false)" \
             "Log client-api mencatat correlation_id=${CORR_ID} dan latensi panggilan keluar (duration_ms)"
@@ -449,37 +460,39 @@ if should_run "p0"; then
         "[P0.5 - Ketentuan 1 & Arsitektur Microservice] Verifikasi tidak ada pemanggilan fungsi atau business logic bersama lintas service (shared/ hanya berisi infra)" \
         "Tidak ada import antar-service dalam go.mod maupun file sumber Go, dan shared/ tidak memuat struct HazardEvent atau logika bisnis"
 
+    CMD_CROSS_IMPORT="for s in services/*/; do n=\$(basename \"\$s\"); grep -rn 'AkuAdalahBMKG/services/' --include='*.go' \"\$s\" | grep -v \"services/\$n/\"; done"
     R_CROSS_IMPORT=$(cd "$PROJECT_ROOT" && for s in services/*/; do n=$(basename "$s"); (grep -rn 'AkuAdalahBMKG/services/' --include='*.go' "$s" 2>/dev/null || true) | (grep -v "services/$n/" || true); done | grep -v "^$" || true)
     print_step_result \
-        "for s in services/*/; do grep -rn 'AkuAdalahBMKG/services/' \$s; done" \
+        "$CMD_CROSS_IMPORT" \
         "$([[ -z "$R_CROSS_IMPORT" ]] && echo "(empty - 0 cross imports)" || echo "$R_CROSS_IMPORT")" \
         "$([[ -z "$R_CROSS_IMPORT" ]] && echo true || echo false)" \
         "Seluruh service terisolasi penuh tanpa ketergantungan kode langsung antar-service (cross-imports = 0)"
 
-    R_SHARED_FILES=$(cd "$PROJECT_ROOT" && ls -1 shared 2>/dev/null || true)
+    R_SHARED_FILES=$(cd "$PROJECT_ROOT" && ls -1 shared 2>/dev/null && (grep -rnE "HazardEvent|SeismicEvent|VolcanicReport" shared/ 2>/dev/null || true))
     SHARED_DOMAIN=$(cd "$PROJECT_ROOT" && (grep -rnE "HazardEvent|SeismicEvent|VolcanicReport" shared/ 2>/dev/null || true))
     print_step_result \
-        "ls -1 shared && grep -rnE 'HazardEvent|SeismicEvent|VolcanicReport' shared/" \
+        "ls -1 shared && (grep -rnE 'HazardEvent|SeismicEvent|VolcanicReport' shared/ || true)" \
         "$R_SHARED_FILES" \
         "$([[ -z "$SHARED_DOMAIN" ]] && echo true || echo false)" \
         "Modul shared/ hanya memuat pustaka infrastruktur (envutil, httpclient, logger, middleware) tanpa domain model"
 
     # Task P0.6: KI-2 & KI-3 - Port Exposure & Isolasi Port Internal
     start_task \
-        "[P0.6 - Ketentuan 2 & 3] Verifikasi exposure port public (8080, 8081, 8082, 8084, 15672) dan isolasi port internal (canonical-store, auth-store, amqp)" \
-        "Port host hanya membuka endpoint yang diwajibkan; canonical-store, auth-store, dan port AMQP 5672 tidak di-expose ke host"
+        "[P0.6 - Ketentuan 2 & 3] Verifikasi exposure port public (8080, 8081, 8082, 8084, 15672) dan isolasi port internal (aggregator, canonical-store, auth-store, amqp)" \
+        "Port host hanya membuka endpoint yang diwajibkan; aggregator, canonical-store, auth-store, dan port AMQP 5672 tidak di-expose ke host"
 
     if [[ "$NO_DOCKER" == "false" ]]; then
-        R_INTERNAL_PORTS=$(cd "$PROJECT_ROOT" && echo "canonical-store 5432: $(docker compose port canonical-store 5432 2>/dev/null || echo 'not published') | auth-store 6379: $(docker compose port auth-store 6379 2>/dev/null || echo 'not published') | amqp 5672: $(docker compose port message-broker 5672 2>/dev/null || echo 'not published')")
+        CMD_INTERNAL_PORTS='echo "aggregator 8083: $(docker compose port aggregator 8083 2>/dev/null || echo '\''not published'\'') | canonical-store 5432: $(docker compose port canonical-store 5432 2>/dev/null || echo '\''not published'\'') | auth-store 6379: $(docker compose port auth-store 6379 2>/dev/null || echo '\''not published'\'') | amqp 5672: $(docker compose port message-broker 5672 2>/dev/null || echo '\''not published'\'')"'
+        R_INTERNAL_PORTS=$(cd "$PROJECT_ROOT" && eval "$CMD_INTERNAL_PORTS")
         PORTS_ISOLATED="true"
-        if [[ "$R_INTERNAL_PORTS" == *"0.0.0.0:5432"* || "$R_INTERNAL_PORTS" == *"0.0.0.0:6379"* || "$R_INTERNAL_PORTS" == *"0.0.0.0:5672"* ]]; then
+        if [[ "$R_INTERNAL_PORTS" == *"0.0.0.0:8083"* || "$R_INTERNAL_PORTS" == *"0.0.0.0:5432"* || "$R_INTERNAL_PORTS" == *"0.0.0.0:6379"* || "$R_INTERNAL_PORTS" == *"0.0.0.0:5672"* ]]; then
             PORTS_ISOLATED="false"
         fi
         print_step_result \
-            "docker compose port canonical-store 5432 && docker compose port auth-store 6379 && docker compose port message-broker 5672" \
+            "$CMD_INTERNAL_PORTS" \
             "$R_INTERNAL_PORTS" \
             "$PORTS_ISOLATED" \
-            "Port internal (Postgres 5432, Redis 6379, AMQP 5672) terisolasi dan tidak di-publish ke host luar"
+            "Port internal (Aggregator 8083, Postgres 5432, Redis 6379, AMQP 5672) terisolasi dan tidak di-publish ke host luar"
     fi
 
     # Task P0.7: MOCK-04 & MOCK-06 - Kontrak Mock Pasif & Filter ?since=
@@ -488,16 +501,17 @@ if should_run "p0"; then
         "Parameter ?since= hanya mengembalikan record setelah timestamp, dan mock tidak melakukan panggilan keluar"
 
     SINCE_TS=$(date -u -v-5M +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u -d '5 minutes ago' +%Y-%m-%dT%H:%M:%SZ 2>/dev/null || date -u +%Y-%m-%dT%H:%M:%SZ)
-    R_SINCE_BMKG=$(curl -s -H "X-BMKG-Key: ${BMKG_API_KEY}" "${BMKG_URL}/seismic-events?since=${SINCE_TS}" | jq --arg s "$SINCE_TS" '[.[] | select((.occurred_at | sub("\\.[0-9]+Z$"; "Z")) < $s)] | length' 2>/dev/null || echo "0")
+    R_SINCE_JSON=$(curl -s -H "X-BMKG-Key: ${BMKG_API_KEY}" "${BMKG_URL}/seismic-events?since=${SINCE_TS}" | jq --arg s "$SINCE_TS" '{older_than_since_count: ([.[] | select((.occurred_at | sub("\\.[0-9]+Z$"; "Z")) < $s)] | length)}' 2>/dev/null || echo '{"older_than_since_count": 99}')
+    R_SINCE_BMKG=$(echo "$R_SINCE_JSON" | jq -r '.older_than_since_count // 99')
     print_step_result \
-        "curl -s -H 'X-BMKG-Key: <bmkg-key>' '${BMKG_URL}/seismic-events?since=${SINCE_TS}' | jq '[.[] | select(.occurred_at < \"${SINCE_TS}\")] | length'" \
-        "{\"older_than_since_count\": ${R_SINCE_BMKG}}" \
+        "curl -s -H 'X-BMKG-Key: ${BMKG_API_KEY}' '${BMKG_URL}/seismic-events?since=${SINCE_TS}' | jq --arg s '${SINCE_TS}' '{older_than_since_count: ([.[] | select((.occurred_at | sub(\"\\\\.[0-9]+Z$\"; \"Z\")) < \$s)] | length)}'" \
+        "$R_SINCE_JSON" \
         "$([[ "$R_SINCE_BMKG" -eq 0 ]] && echo true || echo false)" \
         "Filter ?since= pada BMKG berfungsi benar (0 record lebih lama dari timestamp filter)"
 
     R_MOCK_OUTBOUND=$(cd "$PROJECT_ROOT" && (grep -rnE 'http\.(Post|Get|NewRequest|Client)' services/bmkg-mock/src services/pvmbg-mock/src 2>/dev/null || true) | (grep -v "_test" || true))
     print_step_result \
-        "grep -rnE 'http.(Post|Get|NewRequest|Client)' services/bmkg-mock/src services/pvmbg-mock/src" \
+        "grep -rnE 'http\.(Post|Get|NewRequest|Client)' services/bmkg-mock/src services/pvmbg-mock/src | grep -v '_test'" \
         "$([[ -z "$R_MOCK_OUTBOUND" ]] && echo "(empty - 0 outbound HTTP calls)" || echo "$R_MOCK_OUTBOUND")" \
         "$([[ -z "$R_MOCK_OUTBOUND" ]] && echo true || echo false)" \
         "Mock BMKG dan PVMBG terbukti pasif (0 outbound HTTP client/request)"
@@ -518,18 +532,12 @@ if should_run "p0"; then
     fi
 
     OPS_TOK=$(fetch_ops_token)
-    R_CANON_SCHEMA=$(curl -s -H "Authorization: Bearer ${OPS_TOK}" "${CLIENT_API_URL}/hazards?limit=100" | jq '
-        [.data[]? | {
-            keys_ok: (keys == ["area_name","attributes","hazard_id","hazard_type","ingested_at","latitude","longitude","occurred_at","severity","source","source_ref_id"]),
-            id_ok: (.hazard_id == "\(.source)-\(.source_ref_id)" and (.hazard_id | test("^[A-Za-z0-9._-]+$"))),
-            enum_ok: ((.source | IN("BMKG","PVMBG")) and (.hazard_type | IN("SEISMIC","VOLCANIC")) and (.severity | IN("NORMAL","WASPADA","SIAGA","AWAS"))),
-            pair_ok: ((.source == "BMKG") == (.hazard_type == "SEISMIC")),
-            time_ok: ((.occurred_at | endswith("Z")) and (.ingested_at | endswith("Z")) and (.ingested_at >= .occurred_at))
-        }] | {total: length, invalid_records: map(select(all(.[]; .) | not)) | length}' 2>/dev/null || echo '{"total":0,"invalid_records":99}')
+    JQ_CANON_FILTER='[.data[]? | {keys_ok: (keys == ["area_name","attributes","hazard_id","hazard_type","ingested_at","latitude","longitude","occurred_at","severity","source","source_ref_id"]), id_ok: (.hazard_id == "\(.source)-\(.source_ref_id)" and (.hazard_id | test("^[A-Za-z0-9._-]+$"))), enum_ok: ((.source | IN("BMKG","PVMBG")) and (.hazard_type | IN("SEISMIC","VOLCANIC")) and (.severity | IN("NORMAL","WASPADA","SIAGA","AWAS"))), pair_ok: ((.source == "BMKG") == (.hazard_type == "SEISMIC")), time_ok: ((.occurred_at | endswith("Z")) and (.ingested_at | endswith("Z")) and (.ingested_at >= .occurred_at))}] | {total: length, invalid_records: map(select(all(.[]; .) | not)) | length}'
+    R_CANON_SCHEMA=$(curl -s -H "Authorization: Bearer ${OPS_TOK}" "${CLIENT_API_URL}/hazards?limit=100" | jq "$JQ_CANON_FILTER" 2>/dev/null || echo '{"total":0,"invalid_records":99}')
     INVALID_CNT=$(echo "$R_CANON_SCHEMA" | jq -r '.invalid_records // 99')
     TOTAL_CANON_CNT=$(echo "$R_CANON_SCHEMA" | jq -r '.total // 0')
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <ops-token>' '${CLIENT_API_URL}/hazards?limit=100' | jq '<11-canonical-fields-validation>'" \
+        "curl -s -H 'Authorization: Bearer ${OPS_TOK}' '${CLIENT_API_URL}/hazards?limit=100' | jq '${JQ_CANON_FILTER}'" \
         "$R_CANON_SCHEMA" \
         "$([[ "$INVALID_CNT" -eq 0 && "$TOTAL_CANON_CNT" -gt 0 ]] && echo true || echo false)" \
         "Seluruh ${TOTAL_CANON_CNT} record memenuhi 11 field kanonik, format ID <source>-<source_ref_id>, enum valid, dan timestamp ISO-8601 UTC"
@@ -549,7 +557,7 @@ if should_run "p1"; then
     R_P1_SEIS=$(curl -s -H "Authorization: Bearer ${OPS_TOK}" "${CLIENT_API_URL}/hazards?type=SEISMIC&limit=50" | jq '[.data[]? | select(.attributes.potential_tsunami == true and .attributes.tsunami_warning != null)][0]' 2>/dev/null || echo "null")
     P1_SEIS_ID=$(echo "$R_P1_SEIS" | jq -r '.hazard_id // ""' 2>/dev/null || echo "")
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <ops-token>' '${CLIENT_API_URL}/hazards?type=SEISMIC&limit=50' | jq '[.data[] | select(.attributes.potential_tsunami == true and .attributes.tsunami_warning != null)][0]'" \
+        "curl -s -H 'Authorization: Bearer ${OPS_TOK}' '${CLIENT_API_URL}/hazards?type=SEISMIC&limit=50' | jq '[.data[]? | select(.attributes.potential_tsunami == true and .attributes.tsunami_warning != null)][0]'" \
         "$R_P1_SEIS" \
         "$([[ -n "$P1_SEIS_ID" && "$P1_SEIS_ID" != "null" ]] && echo true || echo false)" \
         "SeismicEvent berhasil dipetakan ke HazardEvent (${P1_SEIS_ID}) beserta korelasi tsunami_warning dan severity kanonik"
@@ -557,7 +565,7 @@ if should_run "p1"; then
     R_P1_VOLC_OLD=$(curl -s -H "Authorization: Bearer ${OPS_TOK}" "${CLIENT_API_URL}/hazards?type=VOLCANIC&limit=50" | jq '[.data[]? | select(.attributes.confidence_level == null)][0]' 2>/dev/null || echo "null")
     P1_VOLC_OLD_ID=$(echo "$R_P1_VOLC_OLD" | jq -r '.hazard_id // ""' 2>/dev/null || echo "")
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <ops-token>' '${CLIENT_API_URL}/hazards?type=VOLCANIC&limit=50' | jq '[.data[] | select(.attributes.confidence_level == null)][0]'" \
+        "curl -s -H 'Authorization: Bearer ${OPS_TOK}' '${CLIENT_API_URL}/hazards?type=VOLCANIC&limit=50' | jq '[.data[]? | select(.attributes.confidence_level == null)][0]'" \
         "$R_P1_VOLC_OLD" \
         "$([[ -n "$P1_VOLC_OLD_ID" && "$P1_VOLC_OLD_ID" != "null" ]] && echo true || echo false)" \
         "VolcanicReport skema awal berhasil dipetakan ke HazardEvent (${P1_VOLC_OLD_ID}) dengan koordinat tabel referensi gunung api tanpa confidence_level"
@@ -573,7 +581,7 @@ if should_run "p1"; then
         -d '{"enabled": true}' || echo "{}")
     TOGGLE_VAL=$(echo "$R_TOGGLE_SCHEMA" | jq -r '.confidence_level // false' 2>/dev/null || echo "false")
     print_step_result \
-        "curl -s -X POST ${PVMBG_URL}/admin/schema-version -H 'Content-Type: application/json' -H 'Authorization: Bearer <pvmbg-token>' -d '{\"enabled\": true}'" \
+        "curl -s -X POST ${PVMBG_URL}/admin/schema-version -H 'Content-Type: application/json' -H 'Authorization: Bearer ${PVMBG_TOKEN}' -d '{\"enabled\": true}'" \
         "$R_TOGGLE_SCHEMA" \
         "$([[ "$TOGGLE_VAL" == "true" ]] && echo true || echo false)" \
         "Perubahan skema PVMBG berhasil diaktifkan saat runtime (confidence_level=${TOGGLE_VAL})"
@@ -590,7 +598,7 @@ if should_run "p1"; then
     done
     CONF_VAL=$(echo "$R_P1_VOLC_NEW" | jq -r '.attributes.confidence_level // "null"')
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <ops-token>' '${CLIENT_API_URL}/hazards?type=VOLCANIC&limit=50' | jq '[.data[] | select(.attributes.confidence_level != null)][0]'" \
+        "curl -s -H 'Authorization: Bearer ${OPS_TOK}' '${CLIENT_API_URL}/hazards?type=VOLCANIC&limit=50' | jq '[.data[]? | select(.attributes.confidence_level != null)][0]'" \
         "$R_P1_VOLC_NEW" \
         "$([[ "$CONF_VAL" != "null" && -n "$CONF_VAL" ]] && echo true || echo false)" \
         "Aggregator tetap berjalan tanpa restart dan meneruskan field baru confidence_level=${CONF_VAL} ke dalam attributes"
@@ -630,7 +638,7 @@ if should_run "p2"; then
     P22_RPS=$(echo "$R_P22" | jq -r '.throughput_req_per_sec // 0')
     P22_OK=$(python3 -c "print('true' if float('${P22_ERR}') < 1.0 else 'false')")
     print_step_result \
-        "./scripts/load-test/run-load-test.sh --mode p22 --vus 55 --duration ${LOAD_DUR}" \
+        "./scripts/load-test/run-load-test.sh --mode p22 --vus 55 --duration ${LOAD_DUR} --no-save" \
         "$R_P22" \
         "$P22_OK" \
         "Throughput=${P22_RPS} req/s pada 55 koneksi paralel dengan uncontrolled error rate = ${P22_ERR}% (< 1%)"
@@ -647,14 +655,14 @@ if should_run "p2"; then
         -d '{"outage": true}' || echo "{}")
     OUT_STATE_ON=$(echo "$R_OUTAGE_ON" | jq -r '.outage // false')
     print_step_result \
-        "curl -s -X POST ${PVMBG_URL}/admin/outage -H 'Content-Type: application/json' -H 'Authorization: Bearer <pvmbg-token>' -d '{\"outage\": true}'" \
+        "curl -s -X POST ${PVMBG_URL}/admin/outage -H 'Content-Type: application/json' -H 'Authorization: Bearer ${PVMBG_TOKEN}' -d '{\"outage\": true}'" \
         "$R_OUTAGE_ON" \
         "$([[ "$OUT_STATE_ON" == "true" ]] && echo true || echo false)" \
         "Kondisi outage pada PVMBG berhasil diaktifkan (outage=true)"
 
     R_PVMBG_503=$(curl_error_raw -H "Authorization: Bearer ${PVMBG_TOKEN}" "${PVMBG_URL}/volcanic-reports")
     print_step_result \
-        "curl -i -s -H 'Authorization: Bearer <pvmbg-token>' ${PVMBG_URL}/volcanic-reports" \
+        "curl -i -s -H 'Authorization: Bearer ${PVMBG_TOKEN}' ${PVMBG_URL}/volcanic-reports" \
         "$R_PVMBG_503" \
         "$([[ "$R_PVMBG_503" == *"503"* ]] && echo true || echo false)" \
         "PVMBG Mock mengembalikan HTTP 503 Service Unavailable selama kondisi outage"
@@ -662,7 +670,7 @@ if should_run "p2"; then
     R_SEIS_DURING=$(curl -s -H "Authorization: Bearer ${OPS_TOK}" "${CLIENT_API_URL}/hazards?type=SEISMIC&limit=1" || echo "{}")
     SEIS_DURING_CNT=$(echo "$R_SEIS_DURING" | jq '.data | length' 2>/dev/null || echo "0")
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <ops-token>' '${CLIENT_API_URL}/hazards?type=SEISMIC&limit=1'" \
+        "curl -s -H 'Authorization: Bearer ${OPS_TOK}' '${CLIENT_API_URL}/hazards?type=SEISMIC&limit=1'" \
         "$R_SEIS_DURING" \
         "$([[ "$SEIS_DURING_CNT" -gt 0 ]] && echo true || echo false)" \
         "Data seismik (BMKG) tetap dilayani secara normal (HTTP 200) tanpa terpengaruh outage PVMBG"
@@ -682,7 +690,7 @@ if should_run "p2"; then
     BMKG_ST=$(echo "$R_DEG_VOLC" | jq -r '.source_status.BMKG.status // "UNKNOWN"')
     DEG_CNT=$(echo "$R_DEG_VOLC" | jq '.data | length' 2>/dev/null || echo "0")
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <ops-token>' '${CLIENT_API_URL}/hazards?type=VOLCANIC&limit=1'" \
+        "curl -s -H 'Authorization: Bearer ${OPS_TOK}' '${CLIENT_API_URL}/hazards?type=VOLCANIC&limit=1'" \
         "$R_DEG_VOLC" \
         "$([[ "$BMKG_ST" == "UP" && "$PVMBG_ST" == "DEGRADED" && "$PVMBG_STALE" != "null" && "$DEG_CNT" -gt 0 ]] && echo true || echo false)" \
         "Client-API tetap merespons HTTP 200 dengan data vulkanik terakhir dari Canonical Store, BMKG=UP, dan PVMBG=DEGRADED (stale_since=${PVMBG_STALE})"
@@ -693,7 +701,7 @@ if should_run "p2"; then
         -d '{"outage": false}' || echo "{}")
     OUT_STATE_OFF=$(echo "$R_OUTAGE_OFF" | jq -r 'if .outage == false then "false" else "true" end')
     print_step_result \
-        "curl -s -X POST ${PVMBG_URL}/admin/outage -H 'Content-Type: application/json' -H 'Authorization: Bearer <pvmbg-token>' -d '{\"outage\": false}'" \
+        "curl -s -X POST ${PVMBG_URL}/admin/outage -H 'Content-Type: application/json' -H 'Authorization: Bearer ${PVMBG_TOKEN}' -d '{\"outage\": false}'" \
         "$R_OUTAGE_OFF" \
         "$([[ "$OUT_STATE_OFF" == "false" ]] && echo true || echo false)" \
         "Kondisi outage pada PVMBG berhasil dimatikan (outage=false)"
@@ -712,7 +720,7 @@ if should_run "p2"; then
         fi
     done
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <ops-token>' '${CLIENT_API_URL}/hazards?limit=1' | jq '.source_status'" \
+        "curl -s -H 'Authorization: Bearer ${OPS_TOK}' '${CLIENT_API_URL}/hazards?limit=1' | jq '.source_status'" \
         "$R_REC_STATUS" \
         "$REC_OK" \
         "Sistem pulih otomatis tanpa restart: PVMBG.status == UP dan stale_since == null"
@@ -729,14 +737,14 @@ if should_run "p3"; then
 
     R_BMKG_TO_PVMBG=$(curl_error_raw -H "X-BMKG-Key: ${BMKG_API_KEY}" "${PVMBG_URL}/volcanic-reports")
     print_step_result \
-        "curl -i -s -H 'X-BMKG-Key: <bmkg-key>' ${PVMBG_URL}/volcanic-reports" \
+        "curl -i -s -H 'X-BMKG-Key: ${BMKG_API_KEY}' ${PVMBG_URL}/volcanic-reports" \
         "$R_BMKG_TO_PVMBG" \
         "$([[ "$R_BMKG_TO_PVMBG" == *"401"* || "$R_BMKG_TO_PVMBG" == *"403"* ]] && echo true || echo false)" \
         "Kredensial BMKG ditolak oleh PVMBG dengan HTTP 401 Unauthorized"
 
     R_PVMBG_TO_BMKG=$(curl_error_raw -H "Authorization: Bearer ${PVMBG_TOKEN}" "${BMKG_URL}/seismic-events")
     print_step_result \
-        "curl -i -s -H 'Authorization: Bearer <pvmbg-token>' ${BMKG_URL}/seismic-events" \
+        "curl -i -s -H 'Authorization: Bearer ${PVMBG_TOKEN}' ${BMKG_URL}/seismic-events" \
         "$R_PVMBG_TO_BMKG" \
         "$([[ "$R_PVMBG_TO_BMKG" == *"401"* || "$R_PVMBG_TO_BMKG" == *"403"* ]] && echo true || echo false)" \
         "Kredensial PVMBG ditolak oleh BMKG dengan HTTP 401 Unauthorized"
@@ -757,14 +765,14 @@ if should_run "p3"; then
 
     R_BMKG_TO_CLIENT_API=$(curl_error_raw -H "Authorization: Bearer ${BMKG_API_KEY}" "${CLIENT_API_URL}/hazards")
     print_step_result \
-        "curl -i -s -H 'Authorization: Bearer <bmkg-key>' ${CLIENT_API_URL}/hazards" \
+        "curl -i -s -H 'Authorization: Bearer ${BMKG_API_KEY}' ${CLIENT_API_URL}/hazards" \
         "$R_BMKG_TO_CLIENT_API" \
         "$([[ "$R_BMKG_TO_CLIENT_API" == *"401"* ]] && echo true || echo false)" \
         "Kredensial BMKG ditolak oleh Client-Facing API dengan HTTP 401 INVALID_TOKEN"
 
     R_PVMBG_TO_CLIENT_API=$(curl_error_raw -H "Authorization: Bearer ${PVMBG_TOKEN}" "${CLIENT_API_URL}/hazards")
     print_step_result \
-        "curl -i -s -H 'Authorization: Bearer <pvmbg-token>' ${CLIENT_API_URL}/hazards" \
+        "curl -i -s -H 'Authorization: Bearer ${PVMBG_TOKEN}' ${CLIENT_API_URL}/hazards" \
         "$R_PVMBG_TO_CLIENT_API" \
         "$([[ "$R_PVMBG_TO_CLIENT_API" == *"401"* ]] && echo true || echo false)" \
         "Kredensial PVMBG ditolak oleh Client-Facing API dengan HTTP 401 INVALID_TOKEN"
@@ -779,7 +787,7 @@ if should_run "p3"; then
     M_ACCESS=$(echo "$R_MEDIA_TOK" | jq -r '.access_token // ""')
     M_SCOPE=$(echo "$R_MEDIA_TOK" | jq -r '.scope // ""')
     print_step_result \
-        "curl -s -X POST ${AUTH_URL}/token -H 'Content-Type: application/json' -d '{\"grant_type\":\"client_credentials\",\"client_id\":\"${CLIENT_MEDIA_ID}\",\"client_secret\":\"<media-secret>\"}'" \
+        "curl -s -X POST ${AUTH_URL}/token -H 'Content-Type: application/json' -d '{\"grant_type\":\"client_credentials\",\"client_id\":\"${CLIENT_MEDIA_ID}\",\"client_secret\":\"${CLIENT_MEDIA_SECRET}\"}'" \
         "$R_MEDIA_TOK" \
         "$([[ "$M_SCOPE" == "hazards:read:summary" && -n "$M_ACCESS" ]] && echo true || echo false)" \
         "Auth-Service menerbitkan token untuk ${CLIENT_MEDIA_ID} dengan scope=${M_SCOPE}"
@@ -791,7 +799,7 @@ if should_run "p3"; then
     F_SCOPE=$(echo "$R_FIELD_TOK" | jq -r '.scope // ""')
     F_TTL=$(echo "$R_FIELD_TOK" | jq -r '.expires_in // 60')
     print_step_result \
-        "curl -s -X POST ${AUTH_URL}/token -H 'Content-Type: application/json' -d '{\"grant_type\":\"client_credentials\",\"client_id\":\"${CLIENT_FIELD_ID}\",\"client_secret\":\"<field-secret>\"}'" \
+        "curl -s -X POST ${AUTH_URL}/token -H 'Content-Type: application/json' -d '{\"grant_type\":\"client_credentials\",\"client_id\":\"${CLIENT_FIELD_ID}\",\"client_secret\":\"${CLIENT_FIELD_SECRET}\"}'" \
         "$R_FIELD_TOK" \
         "$([[ "$F_SCOPE" == "hazards:read:raw" && -n "$F_ACCESS" && -n "$F_REFRESH" ]] && echo true || echo false)" \
         "Auth-Service menerbitkan access_token (TTL=${F_TTL}s) dan refresh_token untuk ${CLIENT_FIELD_ID} dengan scope=${F_SCOPE}"
@@ -800,21 +808,21 @@ if should_run "p3"; then
     SAMPLE_HID=$(echo "$R_MEDIA_LIST" | jq -r '.data[0].hazard_id // "BMKG-seismic-0001"')
     RAW_LEAKS=$(echo "$R_MEDIA_LIST" | jq '[.data[]? | select(has("source_ref_id") or has("latitude") or has("longitude") or has("attributes"))] | length' 2>/dev/null || echo "0")
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <media-token>' '${CLIENT_API_URL}/hazards?limit=1'" \
+        "curl -s -H 'Authorization: Bearer ${M_ACCESS}' '${CLIENT_API_URL}/hazards?limit=1'" \
         "$R_MEDIA_LIST" \
         "$([[ "$RAW_LEAKS" -eq 0 ]] && echo true || echo false)" \
         "Client Media hanya menerima 7 field Ringkasan (kebocoran field Mentah = ${RAW_LEAKS})"
 
     R_MEDIA_FORBID_1=$(curl_error_raw -H "Authorization: Bearer ${M_ACCESS}" "${CLIENT_API_URL}/hazards?fields=severity,latitude")
     print_step_result \
-        "curl -i -s -H 'Authorization: Bearer <media-token>' '${CLIENT_API_URL}/hazards?fields=severity,latitude'" \
+        "curl -i -s -H 'Authorization: Bearer ${M_ACCESS}' '${CLIENT_API_URL}/hazards?fields=severity,latitude'" \
         "$R_MEDIA_FORBID_1" \
         "$([[ "$R_MEDIA_FORBID_1" == *"403"* && "$R_MEDIA_FORBID_1" == *"INSUFFICIENT_SCOPE"* ]] && echo true || echo false)" \
         "Permintaan eksplisit field mentah (latitude) oleh Media ditolak server dengan HTTP 403 INSUFFICIENT_SCOPE"
 
     R_MEDIA_FORBID_2=$(curl_error_raw -H "Authorization: Bearer ${M_ACCESS}" "${CLIENT_API_URL}/hazards/${SAMPLE_HID}/raw")
     print_step_result \
-        "curl -i -s -H 'Authorization: Bearer <media-token>' '${CLIENT_API_URL}/hazards/${SAMPLE_HID}/raw'" \
+        "curl -i -s -H 'Authorization: Bearer ${M_ACCESS}' '${CLIENT_API_URL}/hazards/${SAMPLE_HID}/raw'" \
         "$R_MEDIA_FORBID_2" \
         "$([[ "$R_MEDIA_FORBID_2" == *"403"* && "$R_MEDIA_FORBID_2" == *"INSUFFICIENT_SCOPE"* ]] && echo true || echo false)" \
         "Akses endpoint /hazards/${SAMPLE_HID}/raw oleh Media ditolak server dengan HTTP 403 INSUFFICIENT_SCOPE"
@@ -822,7 +830,7 @@ if should_run "p3"; then
     R_FIELD_RAW=$(curl -s -H "Authorization: Bearer ${F_ACCESS}" "${CLIENT_API_URL}/hazards/${SAMPLE_HID}/raw" || echo "{}")
     HAS_RAW=$(echo "$R_FIELD_RAW" | jq '.data | (has("source_ref_id") and has("latitude") and has("longitude") and has("attributes"))' 2>/dev/null || echo "false")
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <field-team-token>' '${CLIENT_API_URL}/hazards/${SAMPLE_HID}/raw'" \
+        "curl -s -H 'Authorization: Bearer ${F_ACCESS}' '${CLIENT_API_URL}/hazards/${SAMPLE_HID}/raw'" \
         "$R_FIELD_RAW" \
         "$([[ "$HAS_RAW" == "true" ]] && echo true || echo false)" \
         "Tim Lapangan berhasil mengakses seluruh field Mentah (source_ref_id, latitude, longitude, attributes)"
@@ -837,7 +845,7 @@ if should_run "p3"; then
         sleep "$WAIT_S"
         R_EXP_TOK=$(curl_error_raw -H "Authorization: Bearer ${F_ACCESS}" "${CLIENT_API_URL}/hazards?limit=1")
         print_step_result \
-            "curl -i -s -H 'Authorization: Bearer <expired-field-token>' '${CLIENT_API_URL}/hazards?limit=1'" \
+            "curl -i -s -H 'Authorization: Bearer ${F_ACCESS}' '${CLIENT_API_URL}/hazards?limit=1'" \
             "$R_EXP_TOK" \
             "$([[ "$R_EXP_TOK" == *"401"* && "$R_EXP_TOK" == *"TOKEN_EXPIRED"* ]] && echo true || echo false)" \
             "Setelah ${WAIT_S} detik (TTL=${F_TTL}s), access token lama ditolak dengan HTTP 401 TOKEN_EXPIRED"
@@ -855,7 +863,7 @@ if should_run "p3"; then
     R_NEW_ACCESS_USE=$(curl -s -H "Authorization: Bearer ${NEW_F_ACCESS}" "${CLIENT_API_URL}/hazards?limit=1" || echo "{}")
     NEW_USE_CNT=$(echo "$R_NEW_ACCESS_USE" | jq '.data | length' 2>/dev/null || echo "0")
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <new-field-token>' '${CLIENT_API_URL}/hazards?limit=1'" \
+        "curl -s -H 'Authorization: Bearer ${NEW_F_ACCESS}' '${CLIENT_API_URL}/hazards?limit=1'" \
         "$R_NEW_ACCESS_USE" \
         "$([[ "$NEW_USE_CNT" -gt 0 ]] && echo true || echo false)" \
         "Access token baru hasil refresh diterima dengan baik oleh Client-Facing API (HTTP 200)"
@@ -883,14 +891,14 @@ if should_run "p3"; then
 
     R_GIT_ENV=$(cd "$PROJECT_ROOT" && (git ls-files | grep -E '(^|/)\.env$' || echo "NONE"))
     print_step_result \
-        "git ls-files | grep -E '(^|/)\\.env$'" \
+        "git ls-files | grep -E '(^|/)\\.env$' || echo 'NONE'" \
         "$R_GIT_ENV" \
         "$([[ "$R_GIT_ENV" == "NONE" ]] && echo true || echo false)" \
         "Tidak ada berkas .env yang ter-commit di repositori git (NONE)"
 
     R_HARDCODE=$(cd "$PROJECT_ROOT" && (git grep -rnE "BEGIN PRIVATE KEY" services/ || echo "NONE"))
     print_step_result \
-        "git grep -rnE 'BEGIN PRIVATE KEY' services/" \
+        "git grep -rnE 'BEGIN PRIVATE KEY' services/ || echo 'NONE'" \
         "$R_HARDCODE" \
         "$([[ "$R_HARDCODE" == "NONE" ]] && echo true || echo false)" \
         "Tidak ditemukan private key hardcoded pada repository (NONE)"
@@ -917,7 +925,7 @@ if should_run "p4"; then
     R_API_AUTH_DOWN=$(curl -s -H "Authorization: Bearer ${OPS_TOK}" "${CLIENT_API_URL}/hazards?limit=1" || echo "{}")
     API_AUTH_DOWN_CNT=$(echo "$R_API_AUTH_DOWN" | jq '.data | length' 2>/dev/null || echo "0")
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <ops-token>' '${CLIENT_API_URL}/hazards?limit=1'" \
+        "curl -s -H 'Authorization: Bearer ${OPS_TOK}' '${CLIENT_API_URL}/hazards?limit=1'" \
         "$R_API_AUTH_DOWN" \
         "$([[ "$API_AUTH_DOWN_CNT" -gt 0 ]] && echo true || echo false)" \
         "Saat auth-service mati, client-api tetap melayani GET /hazards (HTTP 200) menggunakan verifikasi public key Ed25519 lokal"
@@ -944,14 +952,14 @@ if should_run "p4"; then
         -d "{\"grant_type\":\"client_credentials\",\"client_id\":\"${CLIENT_OPS_ID}\",\"client_secret\":\"${CLIENT_OPS_SECRET}\"}" || echo "{}")
     AUTH_AGG_TOK=$(echo "$R_AUTH_AGG_DOWN" | jq -r '.access_token // ""')
     print_step_result \
-        "curl -s -X POST ${AUTH_URL}/token -H 'Content-Type: application/json' -d '{\"grant_type\":\"client_credentials\",\"client_id\":\"${CLIENT_OPS_ID}\",\"client_secret\":\"<ops-secret>\"}'" \
+        "curl -s -X POST ${AUTH_URL}/token -H 'Content-Type: application/json' -d '{\"grant_type\":\"client_credentials\",\"client_id\":\"${CLIENT_OPS_ID}\",\"client_secret\":\"${CLIENT_OPS_SECRET}\"}'" \
         "$R_AUTH_AGG_DOWN" \
         "$([[ -n "$AUTH_AGG_TOK" ]] && echo true || echo false)" \
         "Saat aggregator mati, auth-service tetap menerbitkan token secara normal (HTTP 200)"
 
     R_API_AGG_DOWN=$(curl_error_raw -H "Authorization: Bearer ${OPS_TOK}" "${CLIENT_API_URL}/hazards?limit=1")
     print_step_result \
-        "curl -i -s -H 'Authorization: Bearer <ops-token>' '${CLIENT_API_URL}/hazards?limit=1'" \
+        "curl -i -s -H 'Authorization: Bearer ${OPS_TOK}' '${CLIENT_API_URL}/hazards?limit=1'" \
         "$R_API_AGG_DOWN" \
         "$([[ "$R_API_AGG_DOWN" == *"503"* && "$R_API_AGG_DOWN" == *"UPSTREAM_UNAVAILABLE"* ]] && echo true || echo false)" \
         "Saat aggregator mati, client-api merespons secara terkontrol dengan HTTP 503 UPSTREAM_UNAVAILABLE"
@@ -970,7 +978,7 @@ if should_run "p4"; then
     R_API_AGG_UP=$(curl -s -H "Authorization: Bearer ${OPS_TOK}" "${CLIENT_API_URL}/hazards?limit=1" || echo "{}")
     API_AGG_UP_CNT=$(echo "$R_API_AGG_UP" | jq '.data | length' 2>/dev/null || echo "0")
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <ops-token>' '${CLIENT_API_URL}/hazards?limit=1'" \
+        "curl -s -H 'Authorization: Bearer ${OPS_TOK}' '${CLIENT_API_URL}/hazards?limit=1'" \
         "$R_API_AGG_UP" \
         "$([[ "$API_AGG_UP_CNT" -gt 0 ]] && echo true || echo false)" \
         "Client-Facing API otomatis kembali melayani permintaan (HTTP 200) tanpa me-restart container lain"
@@ -1002,13 +1010,11 @@ if should_run "p4"; then
         "$([[ "$R_SQL_COEXIST" == *"| f"* && "$R_SQL_COEXIST" == *"| t"* ]] && echo true || echo false)" \
         "Record lama (has_confidence_level=f) dan record baru (has_confidence_level=t) tersimpan berdampingan di PostgreSQL JSONB tanpa migrasi DDL"
 
-    R_VOLC_ALL=$(curl -s -H "Authorization: Bearer ${OPS_TOK}" "${CLIENT_API_URL}/hazards?type=VOLCANIC&limit=100" || echo "{}")
-    OLD_SAMPLE=$(echo "$R_VOLC_ALL" | jq '([.data[]? | select(.attributes.confidence_level == null)][0]) // null' 2>/dev/null || echo "null")
-    NEW_SAMPLE=$(echo "$R_VOLC_ALL" | jq '([.data[]? | select(.attributes.confidence_level != null)][0]) // null' 2>/dev/null || echo "null")
-    R_API_COEXIST=$(jq -n --argjson old "$OLD_SAMPLE" --argjson new "$NEW_SAMPLE" '{old_schema_sample: $old, new_schema_sample: $new}' 2>/dev/null || echo "{}")
+    JQ_COEXIST_FILTER='{old_schema_sample: ([.data[]? | select(.attributes.confidence_level == null)][0] // null), new_schema_sample: ([.data[]? | select(.attributes.confidence_level != null)][0] // null)}'
+    R_API_COEXIST=$(curl -s -H "Authorization: Bearer ${OPS_TOK}" "${CLIENT_API_URL}/hazards?type=VOLCANIC&limit=100" | jq "$JQ_COEXIST_FILTER" 2>/dev/null || echo "{}")
     HAS_BOTH_API=$(echo "$R_API_COEXIST" | jq '(.old_schema_sample != null and .new_schema_sample != null)' 2>/dev/null || echo "false")
     print_step_result \
-        "curl -s -H 'Authorization: Bearer <ops-token>' '${CLIENT_API_URL}/hazards?type=VOLCANIC&limit=100' | jq '{old_schema_sample: ..., new_schema_sample: ...}'" \
+        "curl -s -H 'Authorization: Bearer ${OPS_TOK}' '${CLIENT_API_URL}/hazards?type=VOLCANIC&limit=100' | jq '${JQ_COEXIST_FILTER}'" \
         "$R_API_COEXIST" \
         "$([[ "$HAS_BOTH_API" == "true" ]] && echo true || echo false)" \
         "Kedua versi record (sebelum dan sesudah perubahan skema) dapat dibaca secara utuh melalui API"
@@ -1045,7 +1051,7 @@ if should_run "p5"; then
     R_BINDINGS=$(curl -s -u "${RABBITMQ_USER}:${RABBITMQ_PASS}" "${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/bindings/source" | jq 'map({source, destination, destination_type, routing_key})' || echo "[]")
     HAS_2_Q=$(echo "$R_BINDINGS" | jq '([.[] | select(.destination == "dashboard")] | length > 0) and ([.[] | select(.destination == "notifier")] | length > 0)' 2>/dev/null || echo "false")
     print_step_result \
-        "curl -s -u ${RABBITMQ_USER}:<pass> '${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/bindings/source' | jq 'map({source, destination, destination_type, routing_key})'" \
+        "curl -s -u '${RABBITMQ_USER}:${RABBITMQ_PASS}' '${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/bindings/source' | jq 'map({source, destination, destination_type, routing_key})'" \
         "$R_BINDINGS" \
         "$([[ "$HAS_2_Q" == "true" ]] && echo true || echo false)" \
         "Exchange hazard.events menyalurkan event ke queue independen dashboard dan notifier"
@@ -1089,7 +1095,7 @@ if should_run "p5"; then
     done
 
     print_step_result \
-        "curl -s -u ${RABBITMQ_USER}:<pass> '${RABBITMQ_MGMT_URL}/api/queues/%2F/notifier' | jq '{name, durable, messages_ready, messages_unacknowledged}'" \
+        "curl -s -u '${RABBITMQ_USER}:${RABBITMQ_PASS}' '${RABBITMQ_MGMT_URL}/api/queues/%2F/notifier' | jq '{name, durable, messages_ready, messages_unacknowledged}'" \
         "$R_QUEUE_BACKLOG" \
         "$([[ "$READY_CNT" -gt 0 ]] && echo true || echo false)" \
         "Selama consumer-notifier mati, RabbitMQ menyimpan ${READY_CNT} pesan baru pada durable queue notifier tanpa menahan producer"
@@ -1119,7 +1125,7 @@ if should_run "p5"; then
         fi
     done
     print_step_result \
-        "curl -s -u ${RABBITMQ_USER}:<pass> '${RABBITMQ_MGMT_URL}/api/queues/%2F/notifier' | jq '{name, durable, messages_ready, messages_unacknowledged}'" \
+        "curl -s -u '${RABBITMQ_USER}:${RABBITMQ_PASS}' '${RABBITMQ_MGMT_URL}/api/queues/%2F/notifier' | jq '{name, durable, messages_ready, messages_unacknowledged}'" \
         "$R_QUEUE_AFTER" \
         "$([[ "$READY_AFTER" -eq 0 ]] && echo true || echo false)" \
         "Seluruh backlog pesan pada queue notifier telah tersusul (messages_ready=${READY_AFTER})"
@@ -1148,7 +1154,7 @@ if should_run "p5"; then
     R_PEMDA_BIND=$(curl -s -u "${RABBITMQ_USER}:${RABBITMQ_PASS}" "${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/bindings/source" | jq '[.[] | select(.destination == "pemda-volcano") | {source, destination, routing_key}]' || echo "[]")
     PEMDA_B_CNT=$(echo "$R_PEMDA_BIND" | jq 'length' 2>/dev/null || echo "0")
     print_step_result \
-        "curl -s -u ${RABBITMQ_USER}:<pass> '${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/bindings/source' | jq '[.[] | select(.destination == \"pemda-volcano\") | {source, destination, routing_key}]'" \
+        "curl -s -u '${RABBITMQ_USER}:${RABBITMQ_PASS}' '${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/bindings/source' | jq '[.[] | select(.destination == \"pemda-volcano\") | {source, destination, routing_key}]'" \
         "$R_PEMDA_BIND" \
         "$([[ "$PEMDA_B_CNT" -gt 0 ]] && echo true || echo false)" \
         "Queue pemda-volcano terikat secara dinamis ke exchange hazard.events dengan routing_key=volcanic"
@@ -1168,14 +1174,15 @@ if should_run "p5"; then
         "Pesan pertama diproses (notification_sent), duplikasi di-skip (notification_skipped_duplicate), perubahan severity diproses ulang, dan pesan rusak ditolak (message_rejected)"
 
     NOW_TS=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-    DUP_CORR="qa-dup-trace-$(date +%s)"
+    DUP_TS=$(date +%s)
+    DUP_ID="QA-dup-${DUP_TS}"
+    DUP_CORR="qa-dup-trace-${DUP_TS}"
 
-    # Helper publish synthetic event
-    pub_event() {
+    build_pub_body() {
         local sev="$1"
         local payload_json
-        payload_json=$(jq -n --arg sev "$sev" --arg now "$NOW_TS" '{
-            hazard_id: "QA-dup-0001",
+        payload_json=$(jq -cn --arg hid "$DUP_ID" --arg sev "$sev" --arg now "$NOW_TS" '{
+            hazard_id: $hid,
             source: "BMKG",
             source_ref_id: "dup-0001",
             hazard_type: "SEISMIC",
@@ -1187,34 +1194,55 @@ if should_run "p5"; then
             ingested_at: $now,
             attributes: {}
         }')
-        curl -s -u "${RABBITMQ_USER}:${RABBITMQ_PASS}" "${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/publish" \
-            -X POST -H "Content-Type: application/json" \
-            -d "$(jq -n --arg sev "$sev" --arg corr "$DUP_CORR" --arg pl "$payload_json" '{
-                routing_key: "seismic",
-                payload: $pl,
-                payload_encoding: "string",
-                properties: {
-                    message_id: ("QA-dup-0001:" + $sev),
-                    correlation_id: $corr,
-                    content_type: "application/json",
-                    delivery_mode: 2,
-                    type: "HazardEvent"
-                }
-            }')" > /dev/null || true
+        jq -cn --arg hid "$DUP_ID" --arg sev "$sev" --arg corr "$DUP_CORR" --arg pl "$payload_json" '{
+            routing_key: "seismic",
+            payload: $pl,
+            payload_encoding: "string",
+            properties: {
+                message_id: ($hid + ":" + $sev),
+                correlation_id: $corr,
+                content_type: "application/json",
+                delivery_mode: 2,
+                type: "HazardEvent"
+            }
+        }'
     }
 
-    pub_event "SIAGA"
-    pub_event "SIAGA"
-    pub_event "AWAS"
+    BODY_SIAGA_1=$(build_pub_body "SIAGA")
+    R_PUB_1=$(curl -s -u "${RABBITMQ_USER}:${RABBITMQ_PASS}" -X POST "${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/publish" -H "Content-Type: application/json" -d "$BODY_SIAGA_1" || echo "{}")
+    print_step_result \
+        "curl -s -u '${RABBITMQ_USER}:${RABBITMQ_PASS}' -X POST '${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/publish' -H 'Content-Type: application/json' -d '${BODY_SIAGA_1}'" \
+        "$R_PUB_1" \
+        "$([[ "$(echo "$R_PUB_1" | jq -r '.routed // false')" == "true" ]] && echo true || echo false)" \
+        "Event pertama (${DUP_ID}:SIAGA) berhasil dipublikasikan ke exchange hazard.events"
 
-    # Publish malformed payload
-    curl -s -u "${RABBITMQ_USER}:${RABBITMQ_PASS}" "${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/publish" \
-        -X POST -H "Content-Type: application/json" \
-        -d '{"routing_key":"seismic","payload":"bukan json","payload_encoding":"string","properties":{"message_id":"malformed-1","correlation_id":"qa-bad-001"}}' > /dev/null || true
+    BODY_SIAGA_2=$(build_pub_body "SIAGA")
+    R_PUB_2=$(curl -s -u "${RABBITMQ_USER}:${RABBITMQ_PASS}" -X POST "${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/publish" -H "Content-Type: application/json" -d "$BODY_SIAGA_2" || echo "{}")
+    print_step_result \
+        "curl -s -u '${RABBITMQ_USER}:${RABBITMQ_PASS}' -X POST '${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/publish' -H 'Content-Type: application/json' -d '${BODY_SIAGA_2}'" \
+        "$R_PUB_2" \
+        "$([[ "$(echo "$R_PUB_2" | jq -r '.routed // false')" == "true" ]] && echo true || echo false)" \
+        "Event duplikat (${DUP_ID}:SIAGA) berhasil dipublikasikan ke exchange hazard.events"
+
+    BODY_AWAS=$(build_pub_body "AWAS")
+    R_PUB_3=$(curl -s -u "${RABBITMQ_USER}:${RABBITMQ_PASS}" -X POST "${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/publish" -H "Content-Type: application/json" -d "$BODY_AWAS" || echo "{}")
+    print_step_result \
+        "curl -s -u '${RABBITMQ_USER}:${RABBITMQ_PASS}' -X POST '${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/publish' -H 'Content-Type: application/json' -d '${BODY_AWAS}'" \
+        "$R_PUB_3" \
+        "$([[ "$(echo "$R_PUB_3" | jq -r '.routed // false')" == "true" ]] && echo true || echo false)" \
+        "Event perubahan severity (${DUP_ID}:AWAS) berhasil dipublikasikan ke exchange hazard.events"
+
+    BODY_MALFORMED=$(jq -cn --arg corr "$DUP_CORR" '{"routing_key":"seismic","payload":"bukan json","payload_encoding":"string","properties":{"message_id":"malformed-1","correlation_id":$corr}}')
+    R_PUB_BAD=$(curl -s -u "${RABBITMQ_USER}:${RABBITMQ_PASS}" -X POST "${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/publish" -H "Content-Type: application/json" -d "$BODY_MALFORMED" || echo "{}")
+    print_step_result \
+        "curl -s -u '${RABBITMQ_USER}:${RABBITMQ_PASS}' -X POST '${RABBITMQ_MGMT_URL}/api/exchanges/%2F/hazard.events/publish' -H 'Content-Type: application/json' -d '${BODY_MALFORMED}'" \
+        "$R_PUB_BAD" \
+        "$([[ "$(echo "$R_PUB_BAD" | jq -r '.routed // false')" == "true" ]] && echo true || echo false)" \
+        "Payload rusak (malformed JSON) berhasil dipublikasikan ke exchange hazard.events"
 
     sleep 2
 
-    R_IDEMP_LOGS=$(cd "$PROJECT_ROOT" && docker compose logs --since 10s --no-log-prefix consumer-notifier 2>/dev/null | jq -c "select(.correlation_id==\"${DUP_CORR}\" or .msg==\"message_rejected\") | {msg, idempotency_key, duplicate, error}" || true)
+    R_IDEMP_LOGS=$(cd "$PROJECT_ROOT" && docker compose logs --tail=200 --no-log-prefix consumer-notifier 2>/dev/null | jq -c "select(.correlation_id==\"${DUP_CORR}\") | {msg, idempotency_key, duplicate, error}" || true)
     HAS_SENT=$(echo "$R_IDEMP_LOGS" | grep -c '"msg":"notification_sent"' || echo "0")
     HAS_SKIPPED=$(echo "$R_IDEMP_LOGS" | grep -c '"msg":"notification_skipped_duplicate"' || echo "0")
     HAS_REJECTED=$(echo "$R_IDEMP_LOGS" | grep -c '"msg":"message_rejected"' || echo "0")
@@ -1222,7 +1250,7 @@ if should_run "p5"; then
     [[ "$HAS_SENT" -ge 2 && "$HAS_SKIPPED" -ge 1 && "$HAS_REJECTED" -ge 1 ]] && IDEMP_OK="true"
 
     print_step_result \
-        "Publish duplicate events (SIAGA, SIAGA, AWAS) & malformed payload ke hazard.events" \
+        "docker compose logs --tail=200 --no-log-prefix consumer-notifier | jq -c 'select(.correlation_id==\"${DUP_CORR}\") | {msg, idempotency_key, duplicate, error}'" \
         "$R_IDEMP_LOGS" \
         "$IDEMP_OK" \
         "Consumer-notifier memproses event awal (${HAS_SENT}x sent), men-skip duplikasi (${HAS_SKIPPED}x skipped), dan menolak payload rusak (${HAS_REJECTED}x rejected)"
