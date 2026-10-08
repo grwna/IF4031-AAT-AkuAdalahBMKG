@@ -160,7 +160,7 @@ func (s *PostgresStore) GetHazards(ctx context.Context, filter FilterParams) ([]
 	var args []any
 	argID := 1
 
-	// 1. Decode Cursor jika ada
+	// Decode Cursor jika ada
 	var cursorOccurredAt time.Time
 	var cursorHazardID string
 	if filter.Cursor != "" {
@@ -184,21 +184,21 @@ func (s *PostgresStore) GetHazards(ctx context.Context, filter FilterParams) ([]
 		argID += 2
 	}
 
-	// 2. Filter Type
+	// Filter Type
 	if filter.Type != "" {
 		whereClauses = append(whereClauses, fmt.Sprintf("hazard_type = $%d", argID))
 		args = append(args, strings.ToUpper(filter.Type))
 		argID++
 	}
 
-	// 3. Filter Source
+	// Filter Source
 	if filter.Source != "" {
 		whereClauses = append(whereClauses, fmt.Sprintf("source = $%d", argID))
 		args = append(args, strings.ToUpper(filter.Source))
 		argID++
 	}
 
-	// 4. Filter Severity (mis. "SIAGA,AWAS")
+	// Filter Severity (mis. "SIAGA,AWAS")
 	if len(filter.Severity) > 0 {
 		var sevPlaceholders []string
 		for _, sev := range filter.Severity {
@@ -209,14 +209,14 @@ func (s *PostgresStore) GetHazards(ctx context.Context, filter FilterParams) ([]
 		whereClauses = append(whereClauses, fmt.Sprintf("severity IN (%s)", strings.Join(sevPlaceholders, ",")))
 	}
 
-	// 5. Filter Since
+	// Filter Since
 	if !filter.Since.IsZero() {
 		whereClauses = append(whereClauses, fmt.Sprintf("occurred_at >= $%d", argID))
 		args = append(args, filter.Since)
 		argID++
 	}
 
-	// 6. Filter Until
+	// Filter Until
 	if !filter.Until.IsZero() {
 		whereClauses = append(whereClauses, fmt.Sprintf("occurred_at < $%d", argID))
 		args = append(args, filter.Until)
@@ -268,7 +268,7 @@ func (s *PostgresStore) GetHazards(ctx context.Context, filter FilterParams) ([]
 		return nil, "", err
 	}
 
-	// 7. Hitung next_cursor jika hasil mencapai limit
+	// Hitung next_cursor jika hasil mencapai limit
 	var nextCursor string
 	if len(events) == limit {
 		lastItem := events[len(events)-1]

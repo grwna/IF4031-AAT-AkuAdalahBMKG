@@ -64,7 +64,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
-// Helper untuk mengirimkan respons JSON error standar 
+// Helper untuk mengirimkan respons JSON error standar
 func (s *Server) writeJSONError(w http.ResponseWriter, statusCode int, errCode, message string) {
 	w.WriteHeader(statusCode)
 	resp := domain.APIErrorResponse{
@@ -85,7 +85,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Handler GET /internal/source-status 
+// Handler GET /internal/source-status
 func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -93,11 +93,11 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Handler GET /internal/hazards 
+// Handler GET /internal/hazards
 func (s *Server) handleGetHazards(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
-	// 1. Parse Limit
+	// Parse Limit
 	limit := 50
 	if lStr := query.Get("limit"); lStr != "" {
 		parsedLimit, err := strconv.Atoi(lStr)
@@ -108,7 +108,7 @@ func (s *Server) handleGetHazards(w http.ResponseWriter, r *http.Request) {
 		limit = parsedLimit
 	}
 
-	// 2. Parse Severity (dipisahkan koma, mis. SIAGA,AWAS)
+	// Parse Severity (dipisahkan koma, mis. SIAGA,AWAS)
 	var severityList []string
 	if sevStr := query.Get("severity"); sevStr != "" {
 		for _, part := range strings.Split(sevStr, ",") {
@@ -118,7 +118,7 @@ func (s *Server) handleGetHazards(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// 3. Parse Since (RFC3339)
+	// Parse Since (RFC3339)
 	var sinceTime time.Time
 	if sinceStr := query.Get("since"); sinceStr != "" {
 		t, err := time.Parse(time.RFC3339, sinceStr)
@@ -129,7 +129,7 @@ func (s *Server) handleGetHazards(w http.ResponseWriter, r *http.Request) {
 		sinceTime = t
 	}
 
-	// 4. Parse Until (RFC3339)
+	// Parse Until (RFC3339)
 	var untilTime time.Time
 	if untilStr := query.Get("until"); untilStr != "" {
 		t, err := time.Parse(time.RFC3339, untilStr)
@@ -178,7 +178,7 @@ func (s *Server) handleGetHazards(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Handler GET /internal/hazards/{hazard_id} 
+// Handler GET /internal/hazards/{hazard_id}
 func (s *Server) handleGetHazardByID(w http.ResponseWriter, r *http.Request) {
 	hazardID := r.PathValue("hazard_id")
 	if hazardID == "" {

@@ -118,7 +118,7 @@ func MapSeismicToHazard(seismic domain.SeismicEvent, warning *domain.TsunamiWarn
 
 // MapVolcanicToHazard mengubah data VolcanicReport dari PVMBG menjadi HazardEvent Kanonik
 func MapVolcanicToHazard(volcanic domain.VolcanicReport, ingestedAt time.Time) domain.HazardEvent {
-	// 1. Pemetaan Alert Level ke Severity Kanonik
+	// Pemetaan Alert Level ke Severity Kanonik
 	severity := domain.SeverityNormal
 	switch strings.ToUpper(volcanic.AlertLevel) {
 	case "AWAS":
@@ -131,7 +131,7 @@ func MapVolcanicToHazard(volcanic domain.VolcanicReport, ingestedAt time.Time) d
 		severity = domain.SeverityNormal
 	}
 
-	// 2. Lookup nama & koordinat gunung api dari tabel referensi statis
+	// Lookup nama & koordinat gunung api dari tabel referensi statis
 	areaName := volcanic.VolcanoID
 	var latPtr, lonPtr *float64
 
@@ -143,7 +143,7 @@ func MapVolcanicToHazard(volcanic domain.VolcanicReport, ingestedAt time.Time) d
 		lonPtr = &lonVal
 	}
 
-	// 3. Menyusun attributes (memasukkan field standar & SEMUA field tak dikenal/dinamis)
+	// Menyusun attributes (memasukkan field standar & SEMUA field tak dikenal/dinamis)
 	attrs := make(map[string]any)
 	for k, v := range volcanic.RawFields {
 		// Abaikan field yang sudah dipetakan ke kolom utama
