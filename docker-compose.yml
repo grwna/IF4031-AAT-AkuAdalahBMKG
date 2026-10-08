@@ -27,6 +27,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB:-canonical_store}
     volumes:
       - canonical-store-data:/var/lib/postgresql/data
+    networks:
+      - store-net
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aggregator_user} -d ${POSTGRES_DB:-canonical_store}"]
       interval: 5s
@@ -42,6 +44,9 @@ services:
       - "8083:8083"
     env_file:
       - services/aggregator/.env
+    networks:
+      - default
+      - store-net
     depends_on:
       canonical-store:
         condition: service_healthy
@@ -180,9 +185,10 @@ services:
 networks:
   auth-net:
     internal: true
+  store-net:
+    internal: true
 
 volumes:
   auth-store-data:
   canonical-store-data:
-
   message-broker-data:
