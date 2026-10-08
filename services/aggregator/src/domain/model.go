@@ -27,7 +27,7 @@ const (
 	SeverityAwas    = "AWAS"
 )
 
-// HazardEvent merepresentasikan entitas kanonik sesuai spesifikasi API Internal Aggregator (§3.1)
+// HazardEvent merepresentasikan entitas kanonik sesuai spesifikasi API Internal Aggregator
 type HazardEvent struct {
 	HazardID    string         `json:"hazard_id"`
 	Source      string         `json:"source"`        // "BMKG" atau "PVMBG"
@@ -43,7 +43,7 @@ type HazardEvent struct {
 	IsPublished bool           `json:"-"`          // Status pengiriman pesan ke broker (internal outbox)
 }
 
-// SourceStatus merepresentasikan status kesegaran data per sumber (§3.2)
+// SourceStatus merepresentasikan status kesegaran data per sumber 
 type SourceStatus struct {
 	Status        SourceStatusType `json:"status"`          // "UP" atau "DEGRADED"
 	LastSuccessAt *time.Time       `json:"last_success_at"` // Nullable
@@ -151,7 +151,7 @@ type CursorPayload struct {
 	HazardID   string    `json:"id"`
 }
 
-// Response standar error sesuai spesifikasi §2
+// Response standar error sesuai spesifikasi
 type APIError struct {
 	Code    string `json:"code"`
 	Message string `json:"message"`

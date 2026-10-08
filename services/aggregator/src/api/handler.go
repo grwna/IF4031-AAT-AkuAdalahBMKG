@@ -64,7 +64,7 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	s.handler.ServeHTTP(w, r)
 }
 
-// Helper untuk mengirimkan respons JSON error standar (§2)
+// Helper untuk mengirimkan respons JSON error standar 
 func (s *Server) writeJSONError(w http.ResponseWriter, statusCode int, errCode, message string) {
 	w.WriteHeader(statusCode)
 	resp := domain.APIErrorResponse{
@@ -85,7 +85,7 @@ func (s *Server) handleHealth(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Handler GET /internal/source-status (§4.3)
+// Handler GET /internal/source-status 
 func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusOK)
 	_ = json.NewEncoder(w).Encode(map[string]any{
@@ -93,7 +93,7 @@ func (s *Server) handleSourceStatus(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Handler GET /internal/hazards (§4.1)
+// Handler GET /internal/hazards 
 func (s *Server) handleGetHazards(w http.ResponseWriter, r *http.Request) {
 	query := r.URL.Query()
 
@@ -178,7 +178,7 @@ func (s *Server) handleGetHazards(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// Handler GET /internal/hazards/{hazard_id} (§4.2)
+// Handler GET /internal/hazards/{hazard_id} 
 func (s *Server) handleGetHazardByID(w http.ResponseWriter, r *http.Request) {
 	hazardID := r.PathValue("hazard_id")
 	if hazardID == "" {

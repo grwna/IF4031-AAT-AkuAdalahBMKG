@@ -159,7 +159,7 @@ func (p *Publisher) IsConnected() bool {
 	return p.connected
 }
 
-// Publish mengirimkan HazardEvent ke RabbitMQ Exchange sesuai spesifikasi kontrak §3.2 & §7
+// Publish mengirimkan HazardEvent ke RabbitMQ Exchange sesuai spesifikasi kontrak
 func (p *Publisher) Publish(ctx context.Context, ev domain.HazardEvent, correlationID string) error {
 	p.mu.Lock()
 	defer p.mu.Unlock()

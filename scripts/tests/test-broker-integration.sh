@@ -177,7 +177,7 @@ test_event_publishing() {
 
 # 4. Message Contract Properties Verification
 test_message_contract_spec() {
-    echo -e "\n${BLUE}${BOLD}=== 4. Verifying Message Contract (§3.2 & §5) ===${NC}"
+    echo -e "\n${BLUE}${BOLD}=== 4. Verifying Message Contract  ===${NC}"
 
     # Verify RabbitMQ published message stats
     local overview_info
