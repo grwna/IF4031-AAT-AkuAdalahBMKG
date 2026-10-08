@@ -167,13 +167,13 @@ cp .env.example .env
 docker compose up --build
 
 # Verify every service is healthy
-curl http://localhost:8081/health   # BMKG
-curl http://localhost:8082/health   # PVMBG
+curl http://localhost:8081/health   # BMKG Mock
+curl http://localhost:8082/health   # PVMBG Mock
+docker compose exec aggregator wget -qO- http://localhost:8083/health   # Aggregator (internal)
 curl http://localhost:8080/health   # Client-Facing API
 curl http://localhost:8084/health   # Auth Service
+# RabbitMQ Management UI: http://localhost:15672 (user: bnpb)
 docker compose ps                    # Message Broker & Consumers
-# RabbitMQ Management UI: http://localhost:15672
-# [add health checks for other services]
 ```
 
 Seed data (≥20 historical records) is automatically available in BMKG & PVMBG on first startup.
@@ -186,15 +186,15 @@ Seed data (≥20 historical records) is automatically available in BMKG & PVMBG 
 |---|---|---|
 | BMKG Mock | 8081 | Simulated seismic & tsunami data |
 | PVMBG Mock | 8082 | Simulated volcanic data |
-| Aggregator | [ ] | Polling, mapping, publishing to the broker |
-| Canonical Store | [ ] | HazardEvent storage |
-| Client-Facing API | 8080 | Endpoint for downstream clients |
-| Auth/Token Service | 8084 | Token issuance & refresh |
-| Auth Store | - | Redis for refresh tokens (internal) |
-| Message Broker | 5672 (internal), 15672 (UI) | HazardEvent pub/sub |
-| Consumer – Dashboard | 8085 (internal) | Example subscriber 1 |
-| Consumer – Notifier | 8086 (internal) | Example subscriber 2 |
-| Consumer – Pemda Volcano | 8085 (internal) | Extra subscriber for P5 (profile `p5-extra`) |
+| Aggregator | 8083 (internal) | Polling, canonical mapping, publishing to broker, & internal query API |
+| Canonical Store | 5432 (internal) | PostgreSQL JSONB HazardEvent storage (store-net) |
+| Client-Facing API | 8080 | Endpoint for downstream clients with scope enforcement |
+| Auth/Token Service | 8084 | Ed25519 JWT Token issuance & refresh with scope control |
+| Auth Store | 6379 (internal) | Redis for refresh tokens & rotation (auth-net) |
+| Message Broker | 5672 (internal), 15672 (UI) | RabbitMQ Topic Exchange HazardEvent pub/sub |
+| Consumer – Dashboard | 8085 (internal) | Event subscriber 1 (internal ops dashboard) |
+| Consumer – Notifier | 8086 (internal) | Event subscriber 2 (field team alert notifier) |
+| Consumer – Pemda Volcano | 8085 (profile: p5-extra) | Event subscriber 3 (regional volcano portal) |
 
 ### Client-Facing API Endpoints
 
@@ -216,20 +216,27 @@ Summary fields: `hazard_id`, `source`, `hazard_type`, `severity`, `area_name`, `
 
 ## 8. Triggering Test Scenarios per Problem
 
-### Automated E2E Test Suite & Interactive Live Demo
+### Automated E2E Test Suite & Live Demo Script
+
+Both `scripts/demo/demo.sh` and `scripts/tests/test-e2e.sh` output each test case in a standardized 5-line plain-text format (`task`, `expect`, `cmd`, `resp`, `res`) without ANSI colors or emojis, and support testing all problems or individual problems (`p0`, `p1`, `p2`, `p3`, `p4`, `p5`):
 
 ```bash
-# 1. Run the complete End-to-End (E2E) test suite (Ketentuan 1-7 & Problem 1-5, including 60s TTL & Docker tests)
+# 1. Run all tests with full M1 durations (includes 60s sustained load test in P2 & 60s TTL expiration wait in P3)
+./scripts/demo/demo.sh
+# or via test-e2e.sh:
 ./scripts/tests/test-e2e.sh
 
-# Run E2E in fast mode (skips 60s natural TTL wait) or for a specific problem only:
-./scripts/tests/test-e2e.sh --fast
-./scripts/tests/test-e2e.sh --problem p3
-
-# 2. Launch the Interactive Live Demo script (step-by-step with presenter prompts)
-./scripts/demo/demo.sh
-# Or jump directly to a specific Problem demo:
+# 2. Run a specific problem only (p0, p1, p2, p3, p4, or p5):
 ./scripts/demo/demo.sh p1
+./scripts/demo/demo.sh p2
+./scripts/demo/demo.sh p3
+./scripts/demo/demo.sh p4
+./scripts/demo/demo.sh p5
+# (also supports --problem <p0..p5>, e.g.: ./scripts/tests/test-e2e.sh --problem p3)
+
+# 3. Fast mode (10s load test & skips 60s TTL wait) or Interactive step-by-step pause mode (--step):
+./scripts/demo/demo.sh --fast
+./scripts/demo/demo.sh p1 --step
 ```
 
 ### P1 — Schema Evolution
