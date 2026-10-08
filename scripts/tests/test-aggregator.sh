@@ -16,6 +16,24 @@ CYAN='\033[0;36m'
 BOLD='\033[1m'
 NC='\033[0m' # No Color
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+read_env_var() {
+    local file="$1"
+    local key="$2"
+    local default_val="${3:-}"
+    if [[ -f "$file" ]]; then
+        local val
+        val=$(grep -E "^${key}=" "$file" | tail -n 1 | cut -d'=' -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//" || true)
+        if [[ -n "$val" ]]; then
+            echo "$val"
+            return 0
+        fi
+    fi
+    echo "$default_val"
+}
+
 # Konfigurasi Endpoint & Token Default (dapat di-override via ENV atau CLI flags)
 AGGREGATOR_URL="${AGGREGATOR_URL:-http://localhost:8083}"
 BMKG_URL="${BMKG_URL:-http://localhost:8081}"
@@ -23,21 +41,21 @@ PVMBG_URL="${PVMBG_URL:-http://localhost:8082}"
 CLIENT_API_URL="${CLIENT_API_URL:-http://localhost:8080}"
 AUTH_URL="${AUTH_URL:-http://localhost:8084}"
 
-PVMBG_TOKEN="${PVMBG_TOKEN:-pvmbg-secret-token-456}"
-BMKG_API_KEY="${BMKG_API_KEY:-bmkg-secret-key-123}"
+PVMBG_TOKEN="${PVMBG_TOKEN:-$(read_env_var "${PROJECT_ROOT}/services/pvmbg-mock/.env" "PVMBG_BEARER_TOKEN" "")}"
+BMKG_API_KEY="${BMKG_API_KEY:-$(read_env_var "${PROJECT_ROOT}/services/bmkg-mock/.env" "BMKG_API_KEY" "")}"
 
 # Mode Detail Output (Default: true / Verbose)
 SHOW_DETAILS="${SHOW_DETAILS:-true}"
 
 # Kredensial Client Auth Service Default
-CLIENT_MEDIA_ID="${CLIENT_MEDIA_ID:-media-client}"
-CLIENT_MEDIA_SECRET="${CLIENT_MEDIA_SECRET:-your-media-client-secret-here}"
+CLIENT_MEDIA_ID="${CLIENT_MEDIA_ID:-$(read_env_var "${PROJECT_ROOT}/services/auth-service/.env" "CLIENT_MEDIA_ID" "media-client")}"
+CLIENT_MEDIA_SECRET="${CLIENT_MEDIA_SECRET:-$(read_env_var "${PROJECT_ROOT}/services/auth-service/.env" "CLIENT_MEDIA_SECRET" "")}"
 
-CLIENT_FIELD_ID="${CLIENT_FIELD_ID:-field-team}"
-CLIENT_FIELD_SECRET="${CLIENT_FIELD_SECRET:-your-field-team-secret-here}"
+CLIENT_FIELD_ID="${CLIENT_FIELD_ID:-$(read_env_var "${PROJECT_ROOT}/services/auth-service/.env" "CLIENT_FIELD_ID" "field-team")}"
+CLIENT_FIELD_SECRET="${CLIENT_FIELD_SECRET:-$(read_env_var "${PROJECT_ROOT}/services/auth-service/.env" "CLIENT_FIELD_SECRET" "")}"
 
-CLIENT_OPS_ID="${CLIENT_OPS_ID:-bnpb-ops}"
-CLIENT_OPS_SECRET="${CLIENT_OPS_SECRET:-your-bnpb-ops-secret-here}"
+CLIENT_OPS_ID="${CLIENT_OPS_ID:-$(read_env_var "${PROJECT_ROOT}/services/auth-service/.env" "CLIENT_OPS_ID" "bnpb-ops")}"
+CLIENT_OPS_SECRET="${CLIENT_OPS_SECRET:-$(read_env_var "${PROJECT_ROOT}/services/auth-service/.env" "CLIENT_OPS_SECRET" "")}"
 
 # Statistik Pengujian
 PASSED_TESTS=0

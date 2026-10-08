@@ -14,13 +14,29 @@ YELLOW='\033[1;33m'
 BLUE='\033[0;34m'
 CYAN='\033[0;36m'
 BOLD='\033[1m'
-NC='\033[0m' # No Color
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+
+read_env_var() {
+    local file="$1"
+    local key="$2"
+    local default_val="${3:-}"
+    if [[ -f "$file" ]]; then
+        local val
+        val=$(grep -E "^${key}=" "$file" | tail -n 1 | cut -d'=' -f2- | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//' -e 's/^"//' -e 's/"$//' -e "s/^'//" -e "s/'$//" || true)
+        if [[ -n "$val" ]]; then
+            echo "$val"
+            return 0
+        fi
+    fi
+    echo "$default_val"
+}
 
 # Konfigurasi Endpoint & Credentials Default
 AGGREGATOR_URL="${AGGREGATOR_URL:-http://localhost:8083}"
 RABBITMQ_MGMT_URL="${RABBITMQ_MGMT_URL:-http://localhost:15672}"
-RABBITMQ_USER="${RABBITMQ_USER:-bnpb}"
-RABBITMQ_PASS="${RABBITMQ_PASS:-bnpbpass123}"
+RABBITMQ_USER="${RABBITMQ_USER:-$(read_env_var "${PROJECT_ROOT}/services/message-broker/.env" "RABBITMQ_DEFAULT_USER" "bnpb")}"
+RABBITMQ_PASS="${RABBITMQ_PASS:-$(read_env_var "${PROJECT_ROOT}/services/message-broker/.env" "RABBITMQ_DEFAULT_PASS" "")}"
 BMKG_URL="${BMKG_URL:-http://localhost:8081}"
 PVMBG_URL="${PVMBG_URL:-http://localhost:8082}"
 
