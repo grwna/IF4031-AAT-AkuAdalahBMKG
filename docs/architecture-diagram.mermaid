@@ -1,50 +1,37 @@
+%%{init: {'flowchart': {'nodeSpacing': 25, 'rankSpacing': 45}, 'themeVariables': {'fontSize': '18px'}}}%%
 flowchart TB
-    subgraph External_Sources["Domain Instansi Sumber (Eksternal / Simulasi)"]
-        BMKG["<b>bmkg-mock</b><br/>Container (Go 1.22)<br/>Port: 8081<br/>Delay: 50–150 ms"]
-        PVMBG["<b>pvmbg-mock</b><br/>Container (Go 1.22)<br/>Port: 8082<br/>Delay: 500–3000 ms"]
-    end
+    CLIENT["Client Downstream<br/>Media · Tim Lapangan · BNPB Pusat"]
 
-    subgraph BNPB_Node["Node Koordinasi BNPB (Docker Compose Environment)"]
-        subgraph Default_Net["Jaringan Docker: default (Bridge)"]
-            AGG["<b>aggregator</b><br/>Container (Go 1.22)<br/>Port: 8083<br/>Poller, Mapper, Outbox Publisher, Internal API"]
-            API["<b>client-api</b><br/>Container (Go 1.22)<br/>Port: 8080<br/>JWT Verifier (Ed25519), Scope Filter, Rate Limiter"]
-            AUTH["<b>auth-service</b><br/>Container (Go 1.22)<br/>Port: 8084<br/>JWT Issuer (Ed25519), Refresh Rotation"]
-            MQ["<b>message-broker</b><br/>Container (RabbitMQ 4)<br/>AMQP: 5672 (internal) | UI: 15672<br/>Topic Exchange: hazard.events"]
-            DASH["<b>consumer-dashboard</b><br/>Container (Go 1.22)<br/>Port: 8085 (internal)<br/>Queue: dashboard (key: #)"]
-            NOTIF["<b>consumer-notifier</b><br/>Container (Go 1.22)<br/>Port: 8086 (internal)<br/>Queue: notifier (key: #)"]
-            PEMDA["<b>consumer-pemda-volcano</b><br/>Container (Go 1.22 - Profile p5-extra)<br/>Port: 8085 (internal)<br/>Queue: pemda-volcano (key: volcanic)"]
+    subgraph BNPB["Node BNPB (Docker Compose)"]
+        AUTH["auth-service"]
+        API["client-api :8080"]
+        AGG["aggregator"]
+        MQ["message-broker"]
+        DASH["consumer-dashboard"]
+        NOTIF["consumer-notifier"]
+        PEMDA["consumer-pemda-volcano<br/>(opsional)"]
+
+        subgraph AN["auth-net (internal)"]
+            REDIS[("auth-store<br/>Redis")]
         end
-
-        subgraph Store_Net["Jaringan Docker Terisolasi: store-net (internal: true)"]
-            PG[("<b>canonical-store</b><br/>Container (PostgreSQL 16)<br/>Port: 5432 (internal)<br/>Tabel: hazard_events (JSONB)")]
-        end
-
-        subgraph Auth_Net["Jaringan Docker Terisolasi: auth-net (internal: true)"]
-            REDIS[("<b>auth-store</b><br/>Container (Redis 7 AOF)<br/>Port: 6379 (internal)<br/>Hash Refresh Token & Family")]
+        subgraph SN["store-net (internal)"]
+            PG[("canonical-store<br/>PostgreSQL")]
         end
     end
 
-    subgraph Downstream_Clients["Client Downstream (Read-Only)"]
-        MEDIA["<b>Media / Pers</b><br/>client_id: media-client<br/>Scope: hazards:read:summary"]
-        FIELD["<b>Tim Lapangan (BASARNAS/Pemda)</b><br/>client_id: field-team<br/>Scope: hazards:read:raw"]
-        OPS["<b>BNPB Pusat / Internal Ops</b><br/>client_id: bnpb-ops<br/>Scope: hazards:read:raw"]
+    subgraph SRC["Instansi Sumber (mock)"]
+        BMKG["bmkg-mock :8081"]
+        PVMBG["pvmbg-mock :8082"]
     end
 
-    %% Alur Ingest (Polling)
-    AGG -- "HTTP GET /seismic-events?since=...<br/>GET /tsunami-warnings?since=...<br/>Header: X-BMKG-Key" --> BMKG
-    AGG -- "HTTP GET /volcanic-reports?since=...<br/>Header: Authorization: Bearer <token>" --> PVMBG
-
-    %% Kepemilikan Penyimpanan Eksklusif
-    AGG <== "TCP/PostgreSQL (pgx/v5)<br/>Upsert JSONB & Keyset Query<br/>(Pemilik Eksklusif)" ==> PG
-    AUTH <== "TCP/RESP (go-redis/v9)<br/>Token Rotation & Reuse Detection<br/>(Pemilik Eksklusif)" ==> REDIS
-
-    %% Alur Distribusi Event (Pub/Sub)
-    AGG == "AMQP 0-9-1 Publish (Confirm Mode)<br/>Exchange: hazard.events<br/>Routing Key: seismic | volcanic" ==> MQ
-    MQ == "AMQP Push (Durable Queue, Manual Ack)<br/>Binding Key: #" ==> DASH
-    MQ == "AMQP Push (Durable Queue, Manual Ack)<br/>Binding Key: #" ==> NOTIF
-    MQ -. "AMQP Push (Durable Queue, Manual Ack)<br/>Binding Key: volcanic" .-> PEMDA
-
-    %% Alur Autentikasi & Baca Client
-    MEDIA & FIELD & OPS -- "1. HTTP POST /token & POST /refresh<br/>(client_id & client_secret / refresh_token)" --> AUTH
-    MEDIA & FIELD & OPS -- "2. HTTP GET /hazards, /hazards/{id}, /hazards/{id}/raw<br/>Header: Authorization: Bearer <JWT>" --> API
-    API -- "3. HTTP GET /internal/hazards<br/>GET /internal/hazards/{id}<br/>GET /internal/source-status<br/>Header: X-Correlation-ID" --> AGG
+    CLIENT -->|REST| AUTH
+    CLIENT -->|REST| API
+    API -->|REST| AGG
+    AGG -->|REST polling| BMKG
+    AGG -->|REST polling| PVMBG
+    AGG <==>|SQL, owner| PG
+    AUTH <==>|RESP, owner| REDIS
+    AGG ==>|AMQP publish| MQ
+    MQ ==>|AMQP| DASH
+    MQ ==>|AMQP| NOTIF
+    MQ -.->|AMQP| PEMDA
