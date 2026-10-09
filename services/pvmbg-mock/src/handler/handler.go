@@ -15,22 +15,21 @@ import (
 type PVMBGHandler struct {
 	store            *store.MemoryStore
 	bearerToken      string
-	minDelayMS       atomic.Int64
-	maxDelayMS       atomic.Int64
+	minDelayMS       int
+	maxDelayMS       int
 	schemaConfidence atomic.Bool
 	isOutage         atomic.Bool
 	logger           *slog.Logger
 }
 
 func NewPVMBGHandler(st *store.MemoryStore, token string, minDelay, maxDelay int, log *slog.Logger) *PVMBGHandler {
-	h := &PVMBGHandler{
+	return &PVMBGHandler{
 		store:       st,
 		bearerToken: token,
+		minDelayMS:  minDelay,
+		maxDelayMS:  maxDelay,
 		logger:      log,
 	}
-	h.minDelayMS.Store(int64(minDelay))
-	h.maxDelayMS.Store(int64(maxDelay))
-	return h
 }
 
 func (h *PVMBGHandler) authMiddleware(next http.HandlerFunc) http.HandlerFunc {
@@ -57,21 +56,6 @@ func (h *PVMBGHandler) outageMiddleware(next http.HandlerFunc) http.HandlerFunc 
 	}
 }
 
-func (h *PVMBGHandler) dynamicDelayMiddleware(next http.HandlerFunc) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		minMS := int(h.minDelayMS.Load())
-		maxMS := int(h.maxDelayMS.Load())
-		if maxMS > 0 && maxMS >= minMS {
-			delay := minMS
-			if maxMS > minMS {
-				delay += int(time.Now().UnixNano() % int64(maxMS-minMS))
-			}
-			time.Sleep(time.Duration(delay) * time.Millisecond)
-		}
-		next(w, r)
-	}
-}
-
 func (h *PVMBGHandler) SchemaConfidence() *atomic.Bool {
 	return &h.schemaConfidence
 }
@@ -90,27 +74,6 @@ func (h *PVMBGHandler) GetVolcanicReports(w http.ResponseWriter, r *http.Request
 
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(reports)
-}
-
-func (h *PVMBGHandler) handleDelayAdmin(w http.ResponseWriter, r *http.Request) {
-	var body struct {
-		MinDelayMS *int `json:"min_delay_ms"`
-		MaxDelayMS *int `json:"max_delay_ms"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&body); err == nil {
-		if body.MinDelayMS != nil {
-			h.minDelayMS.Store(int64(*body.MinDelayMS))
-		}
-		if body.MaxDelayMS != nil {
-			h.maxDelayMS.Store(int64(*body.MaxDelayMS))
-		}
-	}
-	w.Header().Set("Content-Type", "application/json")
-	json.NewEncoder(w).Encode(map[string]interface{}{
-		"status":       "ok",
-		"min_delay_ms": h.minDelayMS.Load(),
-		"max_delay_ms": h.maxDelayMS.Load(),
-	})
 }
 
 // atomicToggleEndpoint returns an http.HandlerFunc that sets flag from bodyField
@@ -145,11 +108,12 @@ func (h *PVMBGHandler) HealthCheck(w http.ResponseWriter, r *http.Request) {
 func (h *PVMBGHandler) Routes() http.Handler {
 	mux := http.NewServeMux()
 
+	delay := middleware.DelayMiddleware(h.minDelayMS, h.maxDelayMS)
 	mux.HandleFunc("GET /health", h.HealthCheck)
 	mux.HandleFunc("POST /admin/schema-version", h.authMiddleware(atomicToggleEndpoint(&h.schemaConfidence, "enabled", "confidence_level")))
 	mux.HandleFunc("POST /admin/outage", h.authMiddleware(atomicToggleEndpoint(&h.isOutage, "outage", "outage")))
-	mux.HandleFunc("POST /admin/delay", h.authMiddleware(h.handleDelayAdmin))
-	mux.HandleFunc("GET /volcanic-reports", h.outageMiddleware(h.authMiddleware(h.dynamicDelayMiddleware(h.GetVolcanicReports))))
+	// outage runs before auth chec
+	mux.HandleFunc("GET /volcanic-reports", h.outageMiddleware(h.authMiddleware(delay(h.GetVolcanicReports))))
 
 	return middleware.CorrelationIDMiddleware(middleware.LoggingMiddleware(h.logger)(mux))
 }

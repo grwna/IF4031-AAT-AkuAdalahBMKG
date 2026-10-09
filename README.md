@@ -2,8 +2,8 @@
 
 A disaster-coordination platform bridging BMKG, PVMBG, and BNPB.
 
-**Course:** IF4031 – 
-**Group:** AkuAdalahBMKG
+**Course:** IF4031 – Distributed Application Architecture  
+**Group:** AkuAdalahBMKG  
 **Members:**
 | Name | Student ID |
 |---|---|
@@ -15,9 +15,15 @@ A disaster-coordination platform bridging BMKG, PVMBG, and BNPB.
 
 ## 1. Overview
 
-[OVERVIEW]
+This project implements a distributed disaster coordination platform centered around BNPB as the coordination hub, integrating two independent source agencies:
+1. **BMKG**: Source for seismic activity and tsunami warnings (low latency, 50–150 ms).
+2. **PVMBG**: Source for volcanic observation reports (high latency, 500–3000 ms, legacy infrastructure).
 
-Full architecture diagram: see [`docs/architecture-diagram.*`](docs/architecture-diagram.png).
+BNPB coordinates data collection through an **Aggregator** via periodic polling, maps heterogeneous payloads into a unified canonical model (`HazardEvent`), persists them into PostgreSQL using schema-less JSONB, broadcasts events via RabbitMQ topic exchange to downstream event consumers (`consumer-dashboard`, `consumer-notifier`, `consumer-pemda-volcano`), and exposes access-controlled HTTP endpoints through `client-api` backed by Ed25519 JWT tokens issued by `auth-service`.
+
+- Architecture diagram: see [`docs/architecture-diagram.png`](docs/architecture-diagram.png) 
+- Mermaid source: [`docs/architecture-diagram.mermaid`](docs/architecture-diagram.mermaid). 
+- Full narrative: [`docs/architecture.md`](docs/architecture.md).
 
 ---
 
@@ -25,17 +31,15 @@ Full architecture diagram: see [`docs/architecture-diagram.*`](docs/architecture
 
 | Category | Technology Used |
 |---|---|
-| Programming language | [ ] |
-| Web framework | [ ] |
-| Canonical Store database | [ ] |
-| Message broker | RabbitMQ 4 |
-| Token format/library | JWT (Ed25519), golang-jwt/jwt v5 |
-| Refresh token store | Redis 7 |
-| Structured logging | [ ] |
-| Load testing | [ ] |
-| Orchestration | Docker Compose |
-
-Rationale for each technology choice: see the "Selected Technologies" section in the PDF report.
+| Programming language | Go |
+| Web framework | Go Standard Library `net/http` |
+| Canonical Store database | PostgreSQL 16 (JSONB for dynamic attributes) |
+| Message broker | RabbitMQ 4 (Alpine, Topic Exchange) |
+| Token format & library | JWT (Ed25519 asymmetric signature), `github.com/golang-jwt/jwt/v5` |
+| Refresh token store | Redis 7 (AOF persistence, token family tracking) |
+| Structured logging | Go `log/slog` (JSON output with `correlation_id` & `duration_ms`) |
+| Load testing engine | Custom Go benchmark runner (`scripts/load-test/run-load-test.sh`) & k6 |
+| Container orchestration | Docker Compose v2 |
 
 ---
 
@@ -46,15 +50,31 @@ project-root/
 ├── docker-compose.yml
 ├── .env.example
 ├── docs/
+│   ├── architecture-diagram.mermaid
+│   └── architecture-diagram.png
 ├── .bruno/
+├── shared/
+│   ├── envutil/
+│   ├── httpclient/
+│   ├── logger/
+│   └── middleware/
 ├── scripts/
 │   ├── gen-keys.sh
+│   ├── demo/
+│   │   └── demo.sh
 │   ├── tests/
-│   ├── load-test/
-│   └── demo/
+│   │   ├── test-e2e.sh
+│   │   ├── test-aggregator.sh
+│   │   ├── test-broker-integration.sh
+│   │   └── test-services.sh
+│   └── load-test/
+│       ├── run-load-test.sh
+│       ├── k6-sustained.js
+│       └── k6-hol-blocking.js
 └── services/
     ├── bmkg-mock/
     ├── pvmbg-mock/
+    ├── canonical-store/
     ├── aggregator/
     ├── client-api/
     ├── auth-service/
@@ -67,281 +87,249 @@ project-root/
 
 ## 4. Prerequisites
 
-- Docker & Docker Compose (version [ ])
-- [dll.]
+- **Docker Engine** (v24.0 or newer) & **Docker Compose** (v2.20 or newer)
+- **Host tools for running automated test suites & demo scripts**:
+  - `bash` (v4+)
+  - `curl`
+  - `jq` (v1.6+)
+  - `python3` (used by test scripts for high-precision latency checks)
+- *(Optional)* **Go** 1.22+ (only needed if generating JWT keys or running services locally outside Docker)
 
 ---
 
 ## 5. Configuration Variables
 
-> Each service also has its own `.env.example` file in its own folder (`services/<name>/.env.example`). The table below summarizes the main variables.
+Each service possesses its own `.env.example` file located in `services/<name>/.env.example`. All credentials and connection strings must be configured via environment variables.
 
-### Global (root `.env`)
-| Variable | Description | Default |
+### Global Root (`.env.example`)
+Used for testing.
+
+| Variable | Description | Default / Example |
 |---|---|---|
-| `BMKG_PORT` | BMKG mock port | `8081` |
-| `PVMBG_PORT` | PVMBG mock port | `8082` |
-| `BNPB_CLIENT_API_PORT` | Client-Facing API port | `8080` |
-| `POLLING_INTERVAL_SECONDS` | Aggregator polling interval to the mocks | `[2-5]` |
-| `PVMBG_DELAY_MIN_MS` / `PVMBG_DELAY_MAX_MS` | PVMBG random delay range | `500` / `3000` |
+| `BMKG_PORT` | Published host port for BMKG mock | `8081` |
+| `PVMBG_PORT` | Published host port for PVMBG mock | `8082` |
+| `AGGREGATOR_PORT` | Internal port for aggregator service | `8083` |
+| `BNPB_CLIENT_API_PORT` | Published host port for Client-Facing API | `8080` |
+| `AUTH_SERVICE_PORT` | Published host port for Auth Service | `8084` |
+| `RABBITMQ_MGMT_PORT` | Published host port for RabbitMQ Management UI | `15672` |
+| `POSTGRES_USER` | PostgreSQL superuser for canonical-store container | `aggregator_user` |
+| `POSTGRES_PASSWORD` | PostgreSQL superuser password | `secret_postgres_pass` |
+| `POSTGRES_DB` | Initial database name | `canonical_store` |
+| `BMKG_API_KEY` | Mock API Key for BMKG | `bmkg-secret-key-123` |
+| `PVMBG_BEARER_TOKEN` | Mock Bearer Token for PVMBG | `pvmbg-secret-token-abc` |
+
+### Canonical Store (`services/canonical-store/.env.example`)
+| Variable | Description | Default / Example |
+|---|---|---|
+| `POSTGRES_USER` | Database user for postgres image | `aggregator_user` |
+| `POSTGRES_PASSWORD` | Database password (must match root `.env`) | `secret_postgres_pass` |
+| `POSTGRES_DB` | Database name | `canonical_store` |
 
 ### BMKG Mock (`services/bmkg-mock/.env.example`)
-| Variable | Description |
-|---|---|
-| `BMKG_API_KEY` | Valid X-BMKG-Key credential |
-| `BMKG_FIXED_DELAY_MIN_MS` / `BMKG_FIXED_DELAY_MAX_MS` | Fixed 50–150ms delay |
+| Variable | Description | Default / Example |
+|---|---|---|
+| `PORT` | Listening HTTP port | `8081` |
+| `BMKG_API_KEY` | Expected header key for `X-BMKG-Key` | `bmkg-secret-key-123` |
+| `BMKG_MIN_DELAY_MS` | Minimum simulated response delay | `50` |
+| `BMKG_MAX_DELAY_MS` | Maximum simulated response delay | `150` |
+| `BMKG_EVENT_INTERVAL_SEC` | Background event generation interval | `10` |
 
 ### PVMBG Mock (`services/pvmbg-mock/.env.example`)
-| Variable | Description |
-|---|---|
-| `PVMBG_TOKEN_SECRET` | PVMBG token signing key/format |
+| Variable | Description | Default / Example |
+|---|---|---|
+| `PORT` | Listening HTTP port | `8082` |
+| `PVMBG_BEARER_TOKEN` | Expected token for `Authorization: Bearer <token>` | `pvmbg-secret-token-abc` |
+| `PVMBG_MIN_DELAY_MS` | Minimum simulated response delay | `500` |
+| `PVMBG_MAX_DELAY_MS` | Maximum simulated response delay | `3000` |
+| `PVMBG_EVENT_INTERVAL_SEC` | Background event generation interval | `10` |
+
+### Aggregator (`services/aggregator/.env.example`)
+| Variable | Description | Default / Example |
+|---|---|---|
+| `PORT` | Listening HTTP port | `8083` |
+| `DATABASE_URL` | PostgreSQL connection string (store-net) | `postgres://aggregator_user:secret_postgres_pass@canonical-store:5432/canonical_store?sslmode=disable` |
+| `BMKG_URL` | BMKG mock base URL | `http://bmkg-mock:8081` |
+| `BMKG_API_KEY` | API Key sent to BMKG | `bmkg-secret-key-123` |
+| `PVMBG_URL` | PVMBG mock base URL | `http://pvmbg-mock:8082` |
+| `PVMBG_TOKEN` | Bearer token sent to PVMBG | `pvmbg-secret-token-abc` |
+| `POLL_INTERVAL` | Polling interval for source mocks | `3s` |
+| `RABBITMQ_URL` | AMQP connection string | `amqp://bnpb:secret_rabbitmq_pass@message-broker:5672/` |
+| `EXCHANGE_NAME` | RabbitMQ topic exchange name | `hazard.events` |
+| `MAX_CONCURRENT_REQUESTS` | Concurrency limit on internal query handler | `100` |
 
 ### Auth Service (`services/auth-service/.env.example`)
-| Variable | Description | Default |
+| Variable | Description | Default / Example |
 |---|---|---|
-| `PORT` | Auth service port | `8084` |
-| `JWT_PRIVATE_KEY` | Token signing key, from `scripts/gen-keys.sh` | - |
-| `JWT_ISSUER` | Token issuer | `bnpb-auth-service` |
-| `JWT_AUDIENCE` | Token audience | `bnpb-client-api` |
-| `ACCESS_TOKEN_TTL_SECONDS` | Access token TTL | `60` |
-| `REFRESH_TOKEN_TTL_SECONDS` | Refresh token TTL | `3600` |
-| `REDIS_ADDR` | Redis address | - |
-| `CLIENT_MEDIA_ID` / `_SECRET` / `_SCOPE` | Media client | - |
-| `CLIENT_FIELD_ID` / `_SECRET` / `_SCOPE` | Field Team client | - |
-| `CLIENT_OPS_ID` / `_SECRET` / `_SCOPE` | BNPB Ops client | - |
+| `PORT` | Listening HTTP port | `8084` |
+| `JWT_PRIVATE_KEY` | Base64-encoded PKCS#8 Ed25519 private key (from `./scripts/gen-keys.sh`) | *(base64 string)* |
+| `JWT_ISSUER` | Expected JWT issuer claim (`iss`) | `bnpb-auth-service` |
+| `JWT_AUDIENCE` | Expected JWT audience claim (`aud`) | `bnpb-client-api` |
+| `ACCESS_TOKEN_TTL_SECONDS` | Access token lifespan | `60` |
+| `REFRESH_TOKEN_TTL_SECONDS` | Refresh token lifespan | `3600` |
+| `REDIS_ADDR` | Redis connection address (auth-net) | `auth-store:6379` |
+| `CLIENT_MEDIA_ID` / `_SECRET` / `_SCOPE` | Client ID, Secret, and Scope for Media | `media-client` / `media-secret` / `hazards:read:summary` |
+| `CLIENT_FIELD_ID` / `_SECRET` / `_SCOPE` | Client ID, Secret, and Scope for Field Team | `field-team` / `field-secret` / `hazards:read:raw` |
+| `CLIENT_OPS_ID` / `_SECRET` / `_SCOPE` | Client ID, Secret, and Scope for BNPB Ops | `bnpb-ops` / `ops-secret` / `hazards:read:raw` |
 
 ### Client-Facing API (`services/client-api/.env.example`)
-| Variable | Description | Default |
+| Variable | Description | Default / Example |
 |---|---|---|
-| `PORT` | Client-Facing API port | `8080` |
-| `JWT_PUBLIC_KEY` | Token verification key, from `scripts/gen-keys.sh` (must be the pair of the auth service's `JWT_PRIVATE_KEY`) | - |
-| `JWT_ISSUER` | Expected token issuer, must match the auth service | `bnpb-auth-service` |
-| `JWT_AUDIENCE` | Expected token audience, must match the auth service | `bnpb-client-api` |
-| `JWT_LEEWAY_SECONDS` | Clock skew tolerance for `exp` | `0` |
-| `AGGREGATOR_URL` | Aggregator internal API base URL | - |
-| `AGGREGATOR_TIMEOUT_MS` | Timeout for each call to the aggregator | `2000` |
-| `MAX_CONCURRENT_REQUESTS` | Data requests processed at once; extra requests get `429` | `100` |
+| `PORT` | Listening HTTP port | `8080` |
+| `JWT_PUBLIC_KEY` | Base64-encoded PKIX Ed25519 public key (pair of `JWT_PRIVATE_KEY`) | *(base64 string)* |
+| `JWT_ISSUER` | Expected JWT issuer claim | `bnpb-auth-service` |
+| `JWT_AUDIENCE` | Expected JWT audience claim | `bnpb-client-api` |
+| `JWT_LEEWAY_SECONDS` | Clock skew tolerance for expiration | `0` |
+| `AGGREGATOR_URL` | Internal Aggregator service URL | `http://aggregator:8083` |
+| `AGGREGATOR_TIMEOUT_MS` | Timeout for outbound calls to Aggregator | `2000` |
+| `MAX_CONCURRENT_REQUESTS` | Concurrency limit (excess receives HTTP 429) | `100` |
 
 ### Message Broker (`services/message-broker/.env.example`)
-| Variable | Description | Default |
+| Variable | Description | Default / Example |
 |---|---|---|
-| `RABBITMQ_DEFAULT_USER` | Broker user | `bnpb` |
-| `RABBITMQ_DEFAULT_PASS` | Broker password | - |
+| `RABBITMQ_DEFAULT_USER` | Default broker administrator | `bnpb` |
+| `RABBITMQ_DEFAULT_PASS` | Default broker password (must match `RABBITMQ_URL`) | `secret_rabbitmq_pass` |
 
 ### Consumers (`services/consumer-dashboard/.env.example`, `services/consumer-notifier/.env.example`)
-| Variable | Description | Default |
+| Variable | Description | Default / Example |
 |---|---|---|
-| `PORT` | Health check port | `8085` / `8086` |
-| `RABBITMQ_URL` | Broker URL, password must match `RABBITMQ_DEFAULT_PASS` | - |
-| `EXCHANGE_NAME` | Exchange name | `hazard.events` |
-| `QUEUE_NAME` | Queue name | `dashboard` / `notifier` |
-| `BINDING_KEYS` | Routing keys, comma-separated | `#` |
-| `PREFETCH` | Max unacked messages | `10` |
-
-### Bruno (`.bruno/.env`)
-| Variable | Description |
-|---|---|
-| `BMKG_API_KEY` | Same as BMKG mock |
-| `PVMBG_BEARER_TOKEN` | Same as PVMBG mock |
-| `CLIENT_MEDIA_SECRET` / `CLIENT_FIELD_SECRET` / `CLIENT_OPS_SECRET` | Same as auth service |
-
-*(Fill in as needed for each service — no real credentials should ever be committed, only example values.)*
+| `PORT` | Listening HTTP health port | `8085` (dashboard), `8086` (notifier) |
+| `RABBITMQ_URL` | AMQP connection string | `amqp://bnpb:secret_rabbitmq_pass@message-broker:5672/` |
+| `EXCHANGE_NAME` | Target topic exchange | `hazard.events` |
+| `QUEUE_NAME` | Target queue name | `dashboard` / `notifier` |
+| `BINDING_KEYS` | Routing key patterns (comma-separated) | `#` |
+| `PREFETCH` | Consumer prefetch count | `10` |
 
 ---
 
-## 6. Running the System 
+## 6. Running the System from Scratch
+
+Follow these steps to bootstrap the system from a clean clone:
 
 ```bash
-# 1. Clone the repo and enter the folder
+# 1. Clone the repository and enter the directory
 git clone https://github.com/grwna/IF4031-AAT-AkuAdalahBMKG.git
 cd IF4031-AAT-AkuAdalahBMKG
 
-# 2. Copy the configuration files
+# 2. Copy all .env.example files to active .env files
 cp .env.example .env
-# also copy each services/<name>/.env.example to .env
+for s in services/*/; do
+  if [ -f "${s}.env.example" ]; then
+    cp "${s}.env.example" "${s}.env"
+  fi
+done
 
-# 3. Generate JWT keys, put JWT_PRIVATE_KEY in services/auth-service/.env and JWT_PUBLIC_KEY in services/client-api/.env
-./scripts/gen-keys.sh
+# 3. Synchronize passwords across service .env files
+# Define your chosen shared passwords:
+PG_PASS="secret_postgres_pass"
+RABBIT_PASS="secret_rabbitmq_pass"
 
-# 4. Start the whole system
-docker compose up --build
+# Update PostgreSQL password in root, canonical-store, and aggregator:
+sed -i "s|your-postgres-password-here|${PG_PASS}|g" .env services/canonical-store/.env services/aggregator/.env
+sed -i "s|POSTGRES_PASSWORD=.*|POSTGRES_PASSWORD=${PG_PASS}|g" .env services/canonical-store/.env
 
-# Verify every service is healthy
+# Update RabbitMQ password in message-broker, aggregator, dashboard, and notifier:
+sed -i "s|your-rabbitmq-password-here|${RABBIT_PASS}|g" \
+  services/message-broker/.env \
+  services/aggregator/.env \
+  services/consumer-dashboard/.env \
+  services/consumer-notifier/.env
+
+# 4. Generate Ed25519 JWT keypair and inject into auth-service and client-api
+# If Go is installed locally:
+KEYS_OUTPUT=$(./scripts/gen-keys.sh)
+PRIV_KEY=$(echo "$KEYS_OUTPUT" | grep '^JWT_PRIVATE_KEY=' | cut -d'=' -f2-)
+PUB_KEY=$(echo "$KEYS_OUTPUT" | grep '^JWT_PUBLIC_KEY=' | cut -d'=' -f2-)
+
+sed -i "s|^JWT_PRIVATE_KEY=.*|JWT_PRIVATE_KEY=${PRIV_KEY}|" services/auth-service/.env
+sed -i "s|^JWT_PUBLIC_KEY=.*|JWT_PUBLIC_KEY=${PUB_KEY}|" services/client-api/.env
+
+# (If Go is not installed on host, keys can be generated inside an ephemeral container):
+# docker run --rm -v "$PWD:/app" -w /app/services/auth-service golang:1.22 go run ./tools/genkeys
+
+# 5. Build and launch all containers
+docker compose up --build -d
+
+# 6. Verify health status of all running services
 curl http://localhost:8081/health   # BMKG Mock
 curl http://localhost:8082/health   # PVMBG Mock
-docker compose exec aggregator wget -qO- http://localhost:8083/health   # Aggregator (internal)
 curl http://localhost:8080/health   # Client-Facing API
 curl http://localhost:8084/health   # Auth Service
-# RabbitMQ Management UI: http://localhost:15672 (user: bnpb)
-docker compose ps                    # Message Broker & Consumers
+docker compose exec aggregator wget -qO- http://localhost:8083/health   # Aggregator (internal)
+docker compose exec consumer-dashboard wget -qO- http://localhost:8085/health # Dashboard Consumer
+docker compose exec consumer-notifier wget -qO- http://localhost:8086/health  # Notifier Consumer
 ```
 
-Seed data (≥20 historical records) is automatically available in BMKG & PVMBG on first startup.
+RabbitMQ Management Dashboard is accessible at `http://localhost:15672` (User: `bnpb`, Password: `secret_rabbitmq_pass`).
 
 ---
 
 ## 7. Services & Ports
 
-| Service | Port | Description |
-|---|---|---|
-| BMKG Mock | 8081 | Simulated seismic & tsunami data |
-| PVMBG Mock | 8082 | Simulated volcanic data |
-| Aggregator | 8083 (internal) | Polling, canonical mapping, publishing to broker, & internal query API |
-| Canonical Store | 5432 (internal) | PostgreSQL JSONB HazardEvent storage (store-net) |
-| Client-Facing API | 8080 | Endpoint for downstream clients with scope enforcement |
-| Auth/Token Service | 8084 | Ed25519 JWT Token issuance & refresh with scope control |
-| Auth Store | 6379 (internal) | Redis for refresh tokens & rotation (auth-net) |
-| Message Broker | 5672 (internal), 15672 (UI) | RabbitMQ Topic Exchange HazardEvent pub/sub |
-| Consumer – Dashboard | 8085 (internal) | Event subscriber 1 (internal ops dashboard) |
-| Consumer – Notifier | 8086 (internal) | Event subscriber 2 (field team alert notifier) |
-| Consumer – Pemda Volcano | 8085 (profile: p5-extra) | Event subscriber 3 (regional volcano portal) |
+| Service | Host Port (Default) | Network | Purpose |
+|---|---|---|---|
+| BMKG Mock | `8081` | bridge (`default`) | Seismic & tsunami warning simulation |
+| PVMBG Mock | `8082` | bridge (`default`) | Volcanic report simulation & admin controls |
+| Aggregator | `8083` (internal only) | `default`, `store-net` | Polling, canonical mapping, publishing, internal query API |
+| Canonical Store | `5432` (internal only) | `store-net` (isolated) | PostgreSQL 16 JSONB storage for `hazard_events` |
+| Client-Facing API | `8080` | bridge (`default`) | Downstream client entrypoint with token & scope enforcement |
+| Auth/Token Service | `8084` | `default`, `auth-net` | Token issuer (Ed25519 JWT), refresh rotation |
+| Auth Store | `6379` (internal only) | `auth-net` (isolated) | Redis 7 for refresh token hash family storage |
+| Message Broker | `15672` (UI), `5672` (internal) | bridge (`default`) | RabbitMQ Topic Exchange `hazard.events` |
+| Consumer – Dashboard | `8085` (internal only) | bridge (`default`) | Event subscriber (operations dashboard) |
+| Consumer – Notifier | `8086` (internal only) | bridge (`default`) | Event subscriber (field alert notifications) |
+| Consumer – Pemda Volcano | `8085` (profile: `p5-extra`) | bridge (`default`) | Event subscriber (regional portal demo) |
 
 ### Client-Facing API Endpoints
 
-All endpoints except `/health` require `Authorization: Bearer <access_token>` from the auth service.
+All endpoints except `/health` require an `Authorization: Bearer <access_token>` header issued by Auth Service.
 
 | Endpoint | Media (`hazards:read:summary`) | Field Team / Ops (`hazards:read:raw`) |
 |---|---|---|
-| `GET /hazards` | `200`, summary fields only | `200`, all fields |
-| `GET /hazards?fields=a,b` | `200` if all summary fields, `403` if any raw field | `200` |
-| `GET /hazards/{hazard_id}` | `200`, summary fields only | `200`, all fields |
-| `GET /hazards/{hazard_id}/raw` | `403` | `200` (`source_ref_id`, `latitude`, `longitude`, `attributes`) |
-| `GET /health` | no token needed | no token needed |
+| `GET /hazards` | HTTP 200 (7 Summary fields only) | HTTP 200 (All fields) |
+| `GET /hazards?fields=a,b` | HTTP 200 (if summary only); HTTP 403 (if raw fields requested) | HTTP 200 |
+| `GET /hazards/{hazard_id}` | HTTP 200 (Summary fields only) | HTTP 200 (All fields) |
+| `GET /hazards/{hazard_id}/raw` | HTTP 403 `INSUFFICIENT_SCOPE` | HTTP 200 (`source_ref_id`, `latitude`, `longitude`, `attributes`) |
+| `GET /health` | HTTP 200 (Public) | HTTP 200 (Public) |
 
-Summary fields: `hazard_id`, `source`, `hazard_type`, `severity`, `area_name`, `occurred_at`, `ingested_at`. Raw fields: `source_ref_id`, `latitude`, `longitude`, `attributes`.
-
-`GET /hazards` forwards the filters `type`, `source`, `severity`, `since`, `until`, `limit`, `cursor` to the aggregator. Every data response carries `source_status` from the aggregator. Errors use `{"error":{"code":"...","message":"..."}}`: `401` (`MISSING_TOKEN`, `INVALID_TOKEN`, `TOKEN_EXPIRED`), `403` (`INSUFFICIENT_SCOPE`), `429` (`TOO_MANY_REQUESTS`), `503` (`UPSTREAM_UNAVAILABLE`, aggregator unreachable).
+- **Summary fields**: `hazard_id`, `source`, `hazard_type`, `severity`, `area_name`, `occurred_at`, `ingested_at`.
+- **Raw fields**: `source_ref_id`, `latitude`, `longitude`, `attributes`.
+- Supported query filters on `GET /hazards`: `type`, `source`, `severity`, `since`, `until`, `limit`, `cursor`.
 
 ---
 
-## 8. Triggering Test Scenarios per Problem
+## 8. Triggering Test Scenarios
 
-### Automated E2E Test Suite & Live Demo Script
+### Automated Verification Suites
 
-Both `scripts/demo/demo.sh` and `scripts/tests/test-e2e.sh` output each test case in a standardized 5-line plain-text format (`task`, `expect`, `cmd`, `resp`, `res`) without ANSI colors or emojis, and support testing all problems or individual problems (`p0`, `p1`, `p2`, `p3`, `p4`, `p5`):
+The repository provides automated test scripts formatted without ANSI color noise for standardized evaluation reporting:
 
 ```bash
-# 1. Run all tests with full M1 durations (includes 60s sustained load test in P2 & 60s TTL expiration wait in P3)
+# 1. Run all scenarios (includes 60s sustained load test & 60s token TTL wait):
 ./scripts/demo/demo.sh
-# or via test-e2e.sh:
+# or via:
 ./scripts/tests/test-e2e.sh
 
-# 2. Run a specific problem only (p0, p1, p2, p3, p4, or p5):
-./scripts/demo/demo.sh p1
-./scripts/demo/demo.sh p2
-./scripts/demo/demo.sh p3
-./scripts/demo/demo.sh p4
-./scripts/demo/demo.sh p5
-# (also supports --problem <p0..p5>, e.g.: ./scripts/tests/test-e2e.sh --problem p3)
-
-# 3. Fast mode (10s load test & skips 60s TTL wait) or Interactive step-by-step pause mode (--step):
+# 2. Fast mode (shortened 10s load test and immediate token verification):
 ./scripts/demo/demo.sh --fast
+
+# 3. Interactive step-by-step mode (pauses between each step for ENTER):
 ./scripts/demo/demo.sh p1 --step
+
+# 4. Run an individual problem:
+./scripts/demo/demo.sh p0   # Ketentuan Dasar & Ingest
+./scripts/demo/demo.sh p1   # Schema Evolution
+./scripts/demo/demo.sh p2   # Concurrency, Latency, & Outage
+./scripts/demo/demo.sh p3   # Auth & Trust Domains
+./scripts/demo/demo.sh p4   # Container Independence & Flexible Storage
+./scripts/demo/demo.sh p5   # Pub/Sub Fan-out & Idempotency
 ```
 
-### P1 — Schema Evolution
-```bash
-# Run the system with PVMBG's initial schema, observe the resulting HazardEvents
-# Then trigger a schema change without restarting anything:
-curl -X POST http://localhost:8082/admin/schema-version \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <pvmbg-token>" \
-  -d '{"enabled": true}'
-# Verify the Aggregator keeps producing valid HazardEvents with attributes.confidence_level
-```
+Additional specialized integration tests are available in `scripts/tests/`:
+- `./scripts/tests/test-aggregator.sh` - Deep unit and component testing for Aggregator mapping.
+- `./scripts/tests/test-broker-integration.sh` - Dedicated RabbitMQ broker publishing & queue binding tests.
+- `./scripts/tests/test-services.sh` - Cross-service connectivity and health checks.
 
-### P2 — Concurrency & Graceful Degradation
-```bash
-# Test BMKG-only latency (<300ms p95) while PVMBG delay is up to 3s, plus sustained load test (>=50 VUs, 60s)
-./scripts/load-test/run-load-test.sh
+### Manual Test Scenarios
 
-# Quick load test (55 VUs, 10s) or direct k6 invocation:
-./scripts/load-test/run-load-test.sh --quick
-k6 run scripts/load-test/k6-sustained.js
+Step-by-step manual commands for debugging, exploratory testing, or when automated scripts cannot run are documented in **[`docs/manual-tests.md`](docs/manual-tests.md)**.
 
-# Simulate a PVMBG outage
-curl -X POST http://localhost:8082/admin/outage \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <pvmbg-token>" \
-  -d '{"outage": true}'
-# Observe degradation behavior (source_status.PVMBG.status = "DEGRADED", stale_since populated)
-curl -X POST http://localhost:8082/admin/outage \
-  -H "Content-Type: application/json" \
-  -H "Authorization: Bearer <pvmbg-token>" \
-  -d '{"outage": false}'
-```
-
-### P3 — Auth & Trust Domains
-```bash
-# Show that a BMKG credential is rejected by PVMBG and vice versa
-curl -H "X-BMKG-Key: <bmkg-key>" http://localhost:8082/volcanic-reports          # 401
-curl -H "Authorization: Bearer <pvmbg-token>" http://localhost:8081/seismic-events # 401
-
-# Get a token (Media: media-client, Field Team: field-team, Ops: bnpb-ops)
-curl -X POST http://localhost:8084/token \
-  -H "Content-Type: application/json" \
-  -d '{"grant_type":"client_credentials","client_id":"field-team","client_secret":"<field-secret>"}'
-
-# Media only receives summary fields (no source_ref_id, latitude, longitude, attributes)
-curl -H "Authorization: Bearer <media-token>" http://localhost:8080/hazards
-
-# Media explicitly requesting raw fields is rejected by the server
-curl -H "Authorization: Bearer <media-token>" "http://localhost:8080/hazards?fields=severity,latitude"  # 403 INSUFFICIENT_SCOPE
-curl -H "Authorization: Bearer <media-token>" http://localhost:8080/hazards/<hazard-id>/raw            # 403 INSUFFICIENT_SCOPE
-
-# Field Team receives raw fields
-curl -H "Authorization: Bearer <field-token>" http://localhost:8080/hazards/<hazard-id>/raw            # 200
-
-# Wait for the Field Team access token TTL (default 60s): the old access token is rejected
-curl -H "Authorization: Bearer <field-token>" http://localhost:8080/hazards                            # 401 TOKEN_EXPIRED
-
-# Refresh without logging in again, then use the new access token
-curl -X POST http://localhost:8084/refresh -H "Content-Type: application/json" -d '{"refresh_token":"<refresh-token>"}'
-curl -H "Authorization: Bearer <new-field-token>" http://localhost:8080/hazards                        # 200
-
-# Reusing the old refresh token should be 401
-curl -X POST http://localhost:8084/refresh -H "Content-Type: application/json" -d '{"refresh_token":"<old-refresh-token>"}'
-```
-
-With Bruno: run the `auth` folder, then the `client-api` folder (CLI: `npx @usebruno/cli run auth client-api --env Local` from `.bruno/`). To show the expired token, use the Bruno app (tokens are kept between requests in the same session): run `auth`, wait more than 60 seconds, then run `client-api/Hazards Old Access Token` (expects `401 TOKEN_EXPIRED`).
-
-### P4 — Microservice Architecture & Flexible Storage
-```bash
-# Stop/Restart one container without disrupting the others
-docker compose stop auth-service
-# Verify client-api keeps serving requests with active JWT tokens
-docker compose start auth-service
-
-docker compose restart aggregator
-# Verify other services keep responding during this process
-
-# Verify records from before and after confidence_level was introduced
-# coexist in PostgreSQL JSONB and are both readable without schema migration
-docker compose exec canonical-store psql -U aggregator_user -d canonical_store -c \
-  "SELECT hazard_id, (attributes ? 'confidence_level') AS has_confidence_level, attributes FROM hazard_events WHERE hazard_type = 'VOLCANIC' ORDER BY (attributes ? 'confidence_level') DESC, occurred_at DESC LIMIT 6;"
-```
-
-### P5 — Pub/Sub Fan-out
-```bash
-docker compose logs -f consumer-dashboard consumer-notifier
-
-# Stop one of the consumers, wait for new events to be published, then restart it (catch-up)
-docker compose stop consumer-notifier
-docker compose start consumer-notifier
-
-# Add a new consumer without changing any producer code
-docker compose --profile p5-extra up -d consumer-pemda-volcano
-docker compose --profile p5-extra logs -f consumer-pemda-volcano
-```
-
----
-
-## 9. LLM Usage Declaration
-
-[Explain which parts were assisted by an LLM, per the assignment's Writing Requirements — this must be explicitly declared.]
-
----
-
-## 10. Limitations & Assumptions
-
-[Summary of technical limitations/assumptions; full details are in the PDF report's "Assumptions" and "Known Limitations" sections per problem.]
