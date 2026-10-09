@@ -69,8 +69,7 @@ project-root/
 │   │   └── test-services.sh
 │   └── load-test/
 │       ├── run-load-test.sh
-│       ├── k6-sustained.js
-│       └── k6-hol-blocking.js
+│       └── k6-sustained.js
 └── services/
     ├── bmkg-mock/
     ├── pvmbg-mock/

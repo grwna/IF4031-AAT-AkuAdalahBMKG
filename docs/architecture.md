@@ -106,7 +106,7 @@ Setiap token membawa `scope` claim (`hazards:read:summary` atau `hazards:read:ra
 | aggregator | pvmbg-mock | HTTP/1.1 | `GET /volcanic-reports` dengan header `Authorization: Bearer` |
 | aggregator | canonical-store | TCP/PostgreSQL | Driver `pgx/v5`, upsert JSONB, keyset pagination |
 | aggregator | message-broker | AMQP 0-9-1 | Publisher confirm mode, topic exchange, routing key `seismic`/`volcanic` |
-| client-api | aggregator | HTTP/1.1 | Internal: `GET /internal/hazards`, `GET /internal/hazards/{id}`, `GET /internal/source-status` dengan header `X-Correlation-ID` |
+| client-api | aggregator | HTTP/1.1 | Internal: `GET /internal/hazards`, `GET /internal/hazards/{id}` dengan header `X-Correlation-ID` |
 | auth-service | auth-store | TCP/RESP | Driver `go-redis/v9`, hash refresh token & family tracking |
 | message-broker | consumer-* | AMQP 0-9-1 | Push ke durable queue, manual ack, prefetch 10 |
 | client-* | auth-service | HTTP/1.1 | `POST /token`, `POST /refresh` |
