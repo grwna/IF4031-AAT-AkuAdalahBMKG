@@ -1,0 +1,17 @@
+run:
+  timeout: 5m
+  modules-download-mode: readonly
+
+linters:
+  enable:
+    - errcheck     # Ensures error return values are not ignored
+    - gosimple     # Suggests simplifications of code
+    - govet        # Official Go linter for common mistakes
+    - ineffassign  # Detects ineffective variable assignments
+    - staticcheck  # Advanced passive bug analysis
+    - unused       # Detects unused functions/variables
+    - gosec        # Simple code security gap checks
+
+issues:
+  exclude-use-default: false
+  max-same-issues: 0

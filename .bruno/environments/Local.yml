@@ -1,0 +1,23 @@
+name: Local
+variables:
+  - name: BMKG_PORT
+    value: "8081"
+    description: ""
+  - name: PVMBG_PORT
+    value: "8082"
+    description: ""
+  - name: AUTH_PORT
+    value: "8084"
+    description: ""
+  - name: CLIENT_API_PORT
+    value: "8080"
+    description: ""
+  - name: CLIENT_MEDIA_ID
+    value: media-client
+    description: ""
+  - name: CLIENT_FIELD_ID
+    value: field-team
+    description: ""
+  - name: CLIENT_OPS_ID
+    value: bnpb-ops
+    description: ""

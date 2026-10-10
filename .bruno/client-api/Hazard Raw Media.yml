@@ -1,0 +1,27 @@
+info:
+  name: Hazard Raw Media
+  type: http
+  seq: 8
+
+http:
+  method: GET
+  url: http://localhost:{{CLIENT_API_PORT}}/hazards/{{hazardId}}/raw
+  auth:
+    type: bearer
+    token: "{{mediaAccessToken}}"
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("media raw endpoint is rejected", function () {
+          expect(res.status).to.equal(403);
+          expect(res.body.error.code).to.equal("INSUFFICIENT_SCOPE");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

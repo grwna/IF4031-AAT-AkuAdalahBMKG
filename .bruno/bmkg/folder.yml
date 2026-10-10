@@ -1,0 +1,11 @@
+info:
+  name: bmkg
+  type: folder
+  seq: 1
+
+request:
+  auth:
+    type: apikey
+    key: X-BMKG-Key
+    value: "{{process.env.BMKG_API_KEY}}"
+    placement: header

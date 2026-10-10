@@ -1,0 +1,190 @@
+services:
+  bmkg-mock:
+    build:
+      context: .
+      dockerfile: services/bmkg-mock/Dockerfile
+    ports:
+      - "8081:8081"
+    env_file:
+      - services/bmkg-mock/.env
+    restart: unless-stopped
+
+  pvmbg-mock:
+    build:
+      context: .
+      dockerfile: services/pvmbg-mock/Dockerfile
+    ports:
+      - "8082:8082"
+    env_file:
+      - services/pvmbg-mock/.env
+    restart: unless-stopped
+
+  canonical-store:
+    image: postgres:16-alpine
+    env_file:
+      - services/canonical-store/.env
+    volumes:
+      - canonical-store-data:/var/lib/postgresql/data
+    networks:
+      - store-net
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-aggregator_user} -d ${POSTGRES_DB:-canonical_store}"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  aggregator:
+    build:
+      context: .
+      dockerfile: services/aggregator/Dockerfile
+    env_file:
+      - services/aggregator/.env
+    networks:
+      - default
+      - store-net
+    depends_on:
+      canonical-store:
+        condition: service_healthy
+      message-broker:
+        condition: service_healthy
+      bmkg-mock:
+        condition: service_started
+      pvmbg-mock:
+        condition: service_started
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8083/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  client-api:
+    build:
+      context: .
+      dockerfile: services/client-api/Dockerfile
+    ports:
+      - "8080:8080"
+    env_file:
+      - services/client-api/.env
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8080/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  auth-service:
+    build:
+      context: .
+      dockerfile: services/auth-service/Dockerfile
+    ports:
+      - "8084:8084"
+    env_file:
+      - services/auth-service/.env
+    networks:
+      - default
+      - auth-net
+    depends_on:
+      auth-store:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8084/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  auth-store:
+    image: redis:7-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes:
+      - auth-store-data:/data
+    networks:
+      - auth-net
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+    restart: unless-stopped
+
+  message-broker:
+    image: rabbitmq:4-management-alpine
+    hostname: message-broker
+    ports:
+      - "15672:15672"
+    env_file:
+      - services/message-broker/.env
+    volumes:
+      - message-broker-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 20s
+    restart: unless-stopped
+
+  consumer-dashboard:
+    build:
+      context: .
+      dockerfile: services/consumer-dashboard/Dockerfile
+    env_file:
+      - services/consumer-dashboard/.env
+    depends_on:
+      message-broker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8085/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+  consumer-pemda-volcano:
+    build:
+      context: .
+      dockerfile: services/consumer-dashboard/Dockerfile
+    env_file:
+      - services/consumer-dashboard/.env
+    environment:
+      QUEUE_NAME: pemda-volcano
+      BINDING_KEYS: volcanic
+    depends_on:
+      message-broker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8085/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+    profiles: ["p5-extra"]
+
+  consumer-notifier:
+    build:
+      context: .
+      dockerfile: services/consumer-notifier/Dockerfile
+    env_file:
+      - services/consumer-notifier/.env
+    depends_on:
+      message-broker:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8086/health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+    restart: unless-stopped
+
+networks:
+  auth-net:
+    internal: true
+  store-net:
+    internal: true
+
+volumes:
+  auth-store-data:
+  canonical-store-data:
+  message-broker-data:

@@ -1,0 +1,26 @@
+info:
+  name: Hazards No Token
+  type: http
+  seq: 2
+
+http:
+  method: GET
+  url: http://localhost:{{CLIENT_API_PORT}}/hazards
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: tests
+      code: |-
+        test("rejects request without token", function () {
+          expect(res.status).to.equal(401);
+          expect(res.body.error.code).to.equal("MISSING_TOKEN");
+          expect(res.headers["www-authenticate"]).to.equal("Bearer");
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false

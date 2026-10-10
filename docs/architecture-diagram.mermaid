@@ -1,0 +1,37 @@
+%%{init: {'flowchart': {'nodeSpacing': 25, 'rankSpacing': 45}, 'themeVariables': {'fontSize': '18px'}}}%%
+flowchart TB
+    CLIENT["Client Downstream<br/>Media · Tim Lapangan · BNPB Pusat"]
+
+    subgraph BNPB["Node BNPB (Docker Compose)"]
+        AUTH["auth-service"]
+        API["client-api :8080"]
+        AGG["aggregator"]
+        MQ["message-broker"]
+        DASH["consumer-dashboard"]
+        NOTIF["consumer-notifier"]
+        PEMDA["consumer-pemda-volcano<br/>(opsional)"]
+
+        subgraph AN["auth-net (internal)"]
+            REDIS[("auth-store<br/>Redis")]
+        end
+        subgraph SN["store-net (internal)"]
+            PG[("canonical-store<br/>PostgreSQL")]
+        end
+    end
+
+    subgraph SRC["Instansi Sumber (mock)"]
+        BMKG["bmkg-mock :8081"]
+        PVMBG["pvmbg-mock :8082"]
+    end
+
+    CLIENT -->|REST| AUTH
+    CLIENT -->|REST| API
+    API -->|REST| AGG
+    AGG -->|REST polling| BMKG
+    AGG -->|REST polling| PVMBG
+    AGG <==>|SQL, owner| PG
+    AUTH <==>|RESP, owner| REDIS
+    AGG ==>|AMQP publish| MQ
+    MQ ==>|AMQP| DASH
+    MQ ==>|AMQP| NOTIF
+    MQ -.->|AMQP| PEMDA

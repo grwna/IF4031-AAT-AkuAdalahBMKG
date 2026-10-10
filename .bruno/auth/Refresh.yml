@@ -1,0 +1,39 @@
+info:
+  name: Refresh
+  type: http
+  seq: 5
+
+http:
+  method: POST
+  url: http://localhost:{{AUTH_PORT}}/refresh
+  body:
+    type: json
+    data: |-
+      {
+        "refresh_token": "{{refreshToken}}"
+      }
+  auth: inherit
+
+runtime:
+  scripts:
+    - type: after-response
+      code: |-
+        if (res.status === 200) {
+          bru.setVar("oldRefreshToken", bru.getVar("refreshToken"));
+          bru.setVar("oldAccessToken", bru.getVar("accessToken"));
+          bru.setVar("accessToken", res.body.access_token);
+          bru.setVar("refreshToken", res.body.refresh_token);
+        }
+    - type: tests
+      code: |-
+        test("returns 200 with rotated refresh token", function () {
+          expect(res.status).to.equal(200);
+          expect(res.body.refresh_token).to.not.equal(bru.getVar("oldRefreshToken"));
+        });
+
+settings:
+  encodeUrl: true
+  timeout: 0
+  followRedirects: true
+  maxRedirects: 5
+  forwardAuthorizationHeader: false
