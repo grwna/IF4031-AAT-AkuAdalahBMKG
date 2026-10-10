@@ -14,7 +14,6 @@ type VolcanoRef struct {
 	Lon  float64
 }
 
-// Tabel referensi statis gunung api (dikelola oleh BNPB)
 var VolcanoTable = map[string]VolcanoRef{
 	"v-merapi":   {Name: "Gunung Merapi", Lat: -7.5407, Lon: 110.4457},
 	"merapi":     {Name: "Gunung Merapi", Lat: -7.5407, Lon: 110.4457},
@@ -34,7 +33,7 @@ var VolcanoTable = map[string]VolcanoRef{
 
 // MapSeismicToHazard mengubah data SeismicEvent dari BMKG menjadi HazardEvent Kanonik
 func MapSeismicToHazard(seismic domain.SeismicEvent, warning *domain.TsunamiWarning, ingestedAt time.Time) domain.HazardEvent {
-	// 1. Tentukan severity berdasarkan keberadaan TsunamiWarning dan Magnitude
+	// severity berdasarkan keberadaan TsunamiWarning dan Magnitude
 	severity := domain.SeverityNormal
 	if warning != nil {
 		switch strings.ToUpper(warning.ThreatLevel) {
@@ -57,17 +56,16 @@ func MapSeismicToHazard(seismic domain.SeismicEvent, warning *domain.TsunamiWarn
 		}
 	}
 
-	// 2. Susun map attributes (menampung detail spesifik seismik & field dinamis baru)
+	//  map attributes
 	attrs := make(map[string]any)
 	for k, v := range seismic.RawFields {
-		// Abaikan field yang sudah dipetakan ke field kanonik utama
+		// skip field yg udh dipetain
 		if k == "event_id" || k == "region_name" || k == "epicenter_lat" || k == "epicenter_lon" || k == "occurred_at" {
 			continue
 		}
 		attrs[k] = v
 	}
 
-	// Pastikan field standar seismik selalu ada
 	if _, ok := attrs["magnitude"]; !ok {
 		attrs["magnitude"] = seismic.Magnitude
 	}
@@ -85,7 +83,7 @@ func MapSeismicToHazard(seismic domain.SeismicEvent, warning *domain.TsunamiWarn
 			"affected_zones":    warning.AffectedZones,
 			"estimated_arrival": warning.EstimatedArrival,
 		}
-		// Masukkan field tambahan jika ada di TsunamiWarning
+		// field tambahan
 		for k, v := range warning.RawFields {
 			if k == "warning_id" || k == "related_event_id" || k == "threat_level" || k == "affected_zones" || k == "estimated_arrival" {
 				continue
@@ -95,7 +93,7 @@ func MapSeismicToHazard(seismic domain.SeismicEvent, warning *domain.TsunamiWarn
 		attrs["tsunami_warning"] = warningAttrs
 	}
 
-	// 3. Format ID Kanonik: BMKG-<event_id>
+	// format id
 	hazardID := "BMKG-" + seismic.EventID
 
 	lat := seismic.EpicenterLat
@@ -116,9 +114,8 @@ func MapSeismicToHazard(seismic domain.SeismicEvent, warning *domain.TsunamiWarn
 	}
 }
 
-// MapVolcanicToHazard mengubah data VolcanicReport dari PVMBG menjadi HazardEvent Kanonik
+// mapping data VolcanicReport dari PVMBG menjadi HazardEvent Kanonik
 func MapVolcanicToHazard(volcanic domain.VolcanicReport, ingestedAt time.Time) domain.HazardEvent {
-	// Pemetaan Alert Level ke Severity Kanonik
 	severity := domain.SeverityNormal
 	switch strings.ToUpper(volcanic.AlertLevel) {
 	case "AWAS":
@@ -131,7 +128,7 @@ func MapVolcanicToHazard(volcanic domain.VolcanicReport, ingestedAt time.Time) d
 		severity = domain.SeverityNormal
 	}
 
-	// Lookup nama & koordinat gunung api dari tabel referensi statis
+	// lookup
 	areaName := volcanic.VolcanoID
 	var latPtr, lonPtr *float64
 
@@ -143,7 +140,7 @@ func MapVolcanicToHazard(volcanic domain.VolcanicReport, ingestedAt time.Time) d
 		lonPtr = &lonVal
 	}
 
-	// Menyusun attributes (memasukkan field standar & SEMUA field tak dikenal/dinamis)
+	// map attributes
 	attrs := make(map[string]any)
 	for k, v := range volcanic.RawFields {
 		// Abaikan field yang sudah dipetakan ke kolom utama
@@ -153,7 +150,6 @@ func MapVolcanicToHazard(volcanic domain.VolcanicReport, ingestedAt time.Time) d
 		attrs[k] = v
 	}
 
-	// Pastikan field standar vulkanik ada di attributes jika tidak ada di RawFields
 	if _, ok := attrs["eruption_count_24h"]; !ok {
 		attrs["eruption_count_24h"] = volcanic.EruptionCount24h
 	}
@@ -161,7 +157,7 @@ func MapVolcanicToHazard(volcanic domain.VolcanicReport, ingestedAt time.Time) d
 		attrs["ash_column_height_m"] = volcanic.AshColumnHeightM
 	}
 
-	// Format ID Kanonik: PVMBG-<report_id>
+	// format id
 	hazardID := "PVMBG-" + volcanic.ReportID
 
 	return domain.HazardEvent{

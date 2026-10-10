@@ -13,15 +13,15 @@ import (
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/services/aggregator/src/domain"
 )
 
-// FilterParams menampung parameter query filter dari request API
+
 type FilterParams struct {
-	Type     string    // SEISMIC | VOLCANIC
-	Source   string    // BMKG | PVMBG
-	Severity []string  // SIAGA,AWAS, dll.
-	Since    time.Time // Zero jika tidak ada
-	Until    time.Time // Zero jika tidak ada
-	Limit    int       // Default 50, max 200
-	Cursor   string    // Base64URL cursor string
+	Type     string    
+	Source   string    
+	Severity []string  
+	Since    time.Time 
+	Until    time.Time 
+	Limit    int       
+	Cursor   string    
 }
 
 type PostgresStore struct {
@@ -56,7 +56,7 @@ func (s *PostgresStore) Close() error {
 	return s.db.Close()
 }
 
-// InitSchema membuat tabel hazard_events dan indeks keyset pagination jika belum ada
+// InitSchema 
 func (s *PostgresStore) InitSchema(ctx context.Context) error {
 	query := `
 	CREATE TABLE IF NOT EXISTS hazard_events (
@@ -81,7 +81,7 @@ func (s *PostgresStore) InitSchema(ctx context.Context) error {
 	return err
 }
 
-// UpsertHazardEvent menyimpan atau memperbarui HazardEvent (deterministik berdasarkan hazard_id)
+// menyimpan HazardEvent
 func (s *PostgresStore) UpsertHazardEvent(ctx context.Context, event domain.HazardEvent) error {
 	attrJSON, err := json.Marshal(event.Attributes)
 	if err != nil {
@@ -124,7 +124,7 @@ func (s *PostgresStore) UpsertHazardEvent(ctx context.Context, event domain.Haza
 	return err
 }
 
-// GetHazardByID mengambil satu HazardEvent berdasarkan hazard_id
+// HazardEvent berdasarkan hazard_id
 func (s *PostgresStore) GetHazardByID(ctx context.Context, hazardID string) (*domain.HazardEvent, error) {
 	query := `
 	SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
@@ -154,19 +154,17 @@ func (s *PostgresStore) GetHazardByID(ctx context.Context, hazardID string) (*do
 	return &h, nil
 }
 
-// GetHazards mengambil daftar HazardEvent dengan filtering dan Keyset Pagination (Cursor)
+// get data pakai filtering dan Keyset Pagination (Cursor)
 func (s *PostgresStore) GetHazards(ctx context.Context, filter FilterParams) ([]domain.HazardEvent, string, error) {
 	var whereClauses []string
 	var args []any
 	argID := 1
 
-	// Decode Cursor jika ada
 	var cursorOccurredAt time.Time
 	var cursorHazardID string
 	if filter.Cursor != "" {
 		cursorBytes, err := base64.RawURLEncoding.DecodeString(filter.Cursor)
 		if err != nil {
-			// Coba juga dengan padding standar jika client-api mengirim padding
 			cursorBytes, err = base64.URLEncoding.DecodeString(filter.Cursor)
 			if err != nil {
 				return nil, "", fmt.Errorf("INVALID_CURSOR")
@@ -223,7 +221,7 @@ func (s *PostgresStore) GetHazards(ctx context.Context, filter FilterParams) ([]
 		argID++
 	}
 
-	// Susun query SQL lengkap
+	// Susun query 
 	query := `
 	SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
 	       latitude, longitude, occurred_at, ingested_at, attributes
@@ -268,7 +266,7 @@ func (s *PostgresStore) GetHazards(ctx context.Context, filter FilterParams) ([]
 		return nil, "", err
 	}
 
-	// Hitung next_cursor jika hasil mencapai limit
+	// Hitung next_cursor jika hasil limit
 	var nextCursor string
 	if len(events) == limit {
 		lastItem := events[len(events)-1]
@@ -283,7 +281,7 @@ func (s *PostgresStore) GetHazards(ctx context.Context, filter FilterParams) ([]
 	return events, nextCursor, nil
 }
 
-// GetUnpublishedEvents mengambil semua HazardEvent yang belum berhasil dipublish (is_published = FALSE)
+// HazardEvent yang belum berhasil dipublish (is_published = FALSE)
 func (s *PostgresStore) GetUnpublishedEvents(ctx context.Context) ([]domain.HazardEvent, error) {
 	query := `
 	SELECT hazard_id, source, source_ref_id, hazard_type, severity, area_name,
@@ -317,7 +315,6 @@ func (s *PostgresStore) GetUnpublishedEvents(ctx context.Context) ([]domain.Haza
 	return events, rows.Err()
 }
 
-// MarkAsPublished memperbarui status is_published menjadi TRUE setelah mendapat konfirmasi dari broker
 func (s *PostgresStore) MarkAsPublished(ctx context.Context, hazardID string) error {
 	query := `UPDATE hazard_events SET is_published = TRUE WHERE hazard_id = $1;`
 	_, err := s.db.ExecContext(ctx, query, hazardID)

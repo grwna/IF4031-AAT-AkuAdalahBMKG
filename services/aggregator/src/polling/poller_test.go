@@ -25,7 +25,6 @@ func TestStatusTracker(t *testing.T) {
 	tracker := NewStatusTracker()
 	now := time.Now().UTC()
 
-	// 1. Initial status should be UP for both sources
 	st := tracker.GetStatus()
 	if st[domain.SourceBMKG].Status != domain.SourceStatusUp {
 		t.Errorf("expected initial BMKG status UP, got %s", st[domain.SourceBMKG].Status)
@@ -34,7 +33,6 @@ func TestStatusTracker(t *testing.T) {
 		t.Errorf("expected initial PVMBG status UP, got %s", st[domain.SourcePVMBG].Status)
 	}
 
-	// 2. SetSuccess updates LastSuccessAt and clears error/stale
 	tracker.SetSuccess(domain.SourceBMKG, now)
 	st = tracker.GetStatus()
 	if st[domain.SourceBMKG].LastSuccessAt == nil {
@@ -44,7 +42,6 @@ func TestStatusTracker(t *testing.T) {
 		t.Errorf("expected LastSuccessAt %v, got %v", now, *st[domain.SourceBMKG].LastSuccessAt)
 	}
 
-	// 3. SetDegraded updates status to DEGRADED and sets LastError
 	errMsg := "connection timeout"
 	degradedTime := now.Add(5 * time.Second)
 	tracker.SetDegraded(domain.SourceBMKG, degradedTime, errMsg)
@@ -60,7 +57,6 @@ func TestStatusTracker(t *testing.T) {
 		t.Errorf("expected StaleSince to retain last success time %v, got %v", now, st[domain.SourceBMKG].StaleSince)
 	}
 
-	// 4. Recover with SetSuccess
 	recoverTime := degradedTime.Add(10 * time.Second)
 	tracker.SetSuccess(domain.SourceBMKG, recoverTime)
 	st = tracker.GetStatus()

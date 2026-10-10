@@ -20,7 +20,7 @@ type Server struct {
 	logger      *slog.Logger
 	router      *http.ServeMux
 	handler     http.Handler
-	rateLimiter chan struct{} // Semaphore channel untuk mengendalikan jumlah request bersamaan (Problem 2)
+	rateLimiter chan struct{}
 }
 
 func NewServer(store *store.PostgresStore, tracker *polling.StatusTracker, l *slog.Logger, maxConcurrent int) *Server {
@@ -49,7 +49,7 @@ func (s *Server) routes() {
 
 // ServeHTTP dengan Concurrency Limiter (429 Overload Protection) & Correlation ID middleware
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// 1. Proteksi Overload (Problem 2 Poin 11): Kembalikan HTTP 429 jika batas request bersamaan terlampaui
+	// Proteksi Overload
 	select {
 	case s.rateLimiter <- struct{}{}:
 		defer func() { <-s.rateLimiter }()
@@ -60,7 +60,6 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	w.Header().Set("Content-Type", "application/json")
 
-	// 2. Menggunakan CorrelationIDMiddleware dari shared/middleware
 	s.handler.ServeHTTP(w, r)
 }
 
@@ -118,7 +117,7 @@ func (s *Server) handleGetHazards(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Parse Since (RFC3339)
+	// Parse Since
 	var sinceTime time.Time
 	if sinceStr := query.Get("since"); sinceStr != "" {
 		t, err := time.Parse(time.RFC3339, sinceStr)
@@ -129,7 +128,7 @@ func (s *Server) handleGetHazards(w http.ResponseWriter, r *http.Request) {
 		sinceTime = t
 	}
 
-	// Parse Until (RFC3339)
+	// Parse Until
 	var untilTime time.Time
 	if untilStr := query.Get("until"); untilStr != "" {
 		t, err := time.Parse(time.RFC3339, untilStr)

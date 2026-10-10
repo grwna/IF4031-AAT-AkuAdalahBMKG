@@ -18,7 +18,7 @@ import (
 	"github.com/grwna/IF4031-AAT-AkuAdalahBMKG/shared/logger"
 )
 
-// Tracker thread-safe untuk memantau status kesegaran data per sumber (BMKG & PVMBG)
+// Tracker thread-safe untuk memantau status sumber
 type StatusTracker struct {
 	mu     sync.RWMutex
 	status domain.MapSourceStatus
@@ -37,7 +37,7 @@ func (t *StatusTracker) GetStatus() domain.MapSourceStatus {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
 
-	// Deep copy map untuk menghindari race condition saat dibaca HTTP handler
+	// Deep copy map untuk handle race condition
 	cp := make(domain.MapSourceStatus)
 	for k, v := range t.status {
 		cp[k] = v
@@ -81,7 +81,7 @@ func (t *StatusTracker) SetDegraded(source string, now time.Time, errStr string)
 	t.status[source] = st
 }
 
-// Struct Poller yang menjalankan loop polling ke BMKG dan PVMBG
+
 type Poller struct {
 	store        *store.PostgresStore
 	tracker      *StatusTracker
@@ -92,8 +92,8 @@ type Poller struct {
 	pvmbgURL     string
 	pvmbgToken   string
 	pollInterval time.Duration
-	bmkgClient   *http.Client // Outbound HTTP Client ke BMKG dengan Transport logging latensi
-	pvmbgClient  *http.Client // Outbound HTTP Client ke PVMBG dengan Transport logging latensi
+	bmkgClient   *http.Client 
+	pvmbgClient  *http.Client 
 }
 
 func NewPoller(
@@ -125,13 +125,13 @@ func NewPoller(
 	}
 }
 
-// Start menjalankan goroutine polling berkala hingga context dibatalkan
+// Start menjalankan goroutine polling
 func (p *Poller) Start(ctx context.Context) {
 	p.logger.Info("Memulai background poller untuk BMKG dan PVMBG", slog.Duration("interval", p.pollInterval))
 	ticker := time.NewTicker(p.pollInterval)
 	defer ticker.Stop()
 
-	// Jalankan polling pertama kali langsung saat start
+	// polling pas init
 	p.pollBMKG(ctx)
 	p.pollPVMBG(ctx)
 	p.FlushOutbox(ctx)
@@ -142,7 +142,6 @@ func (p *Poller) Start(ctx context.Context) {
 			p.logger.Info("Background poller dihentikan")
 			return
 		case <-ticker.C:
-			// Polling dilakukan secara independen agar kelambatan PVMBG tidak menahan BMKG
 			go p.pollBMKG(ctx)
 			go p.pollPVMBG(ctx)
 			go p.FlushOutbox(ctx)
@@ -160,7 +159,7 @@ func (p *Poller) pollBMKG(ctx context.Context) {
 	now := time.Now().UTC()
 	lastSuccess := p.tracker.LastSuccessAt(domain.SourceBMKG)
 
-	// Polling seismic events (mengambil data historis saat pertama kali, lalu incremental via ?since=)
+	// Polling seismic events -> ambil data sekali -> inkremen
 	reqURL := fmt.Sprintf("%s/seismic-events", p.bmkgURL)
 	if lastSuccess != nil {
 		reqURL = fmt.Sprintf("%s?since=%s", reqURL, lastSuccess.UTC().Format(time.RFC3339))
@@ -306,7 +305,7 @@ func (p *Poller) pollPVMBG(ctx context.Context) {
 	p.FlushOutbox(ctx)
 }
 
-// FlushOutbox memproses dan mem-publish seluruh event yang belum terkirim (is_published = FALSE) ke broker
+// FlushOutbox -> publish event yang belum dipublish
 func (p *Poller) FlushOutbox(ctx context.Context) {
 	if p.publisher == nil || !p.publisher.IsConnected() {
 		return
