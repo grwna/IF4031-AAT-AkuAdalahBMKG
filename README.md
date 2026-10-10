@@ -2,7 +2,7 @@
 
 A disaster-coordination platform bridging BMKG, PVMBG, and BNPB.
 
-**Course:** IF4031 – Distributed Application Architecture  
+**Course:** IF4031 – Distributed Application Architecture  | Arsitektur Aplikasi Terdistribusi
 **Group:** AkuAdalahBMKG  
 **Members:**
 | Name | Student ID |
